@@ -1,3 +1,4 @@
+[![ci](https://github.com/fgrzl/json/actions/workflows/ci.yml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/ci.yml)
 # JSON 
 
 ## JSON Schema
