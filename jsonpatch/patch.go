@@ -1,36 +1,9 @@
-// Package jsonpatch provides functionality to generate and apply JSON Patch operations.
-//
-// The package includes functions to generate a JSON patch that describes the differences
-// between two JSON documents and apply a series of patch operations to a JSON document.
-//
-// Types:
-// - Patch: Represents a single JSON Patch operation.
-//
-// Functions:
-// - GeneratePatch: Compares two documents and returns patch operations.
-// - ApplyPatch: Applies a series of patch operations to a JSON document.
-//
-// Helper Functions:
-// - toMap: Converts a struct (or already a map) to a map[string]interface{} without JSON round-trips.
-// - toSlice: Converts an array/slice to []interface{} using reflection.
-// - deepEqualFiltered: Compares two values; for strings it trims whitespace.
-// - generateArrayPatch: Generates patch operations to transform one array into another.
-// - parsePath: Splits a JSON pointer path into its components.
-// - isTwoPartArray: Checks if the path has exactly two parts and that the first part refers to an array.
-// - traverseToParent: Walks the target object to the parent of the final key.
-// - applyAdd: Applies an "add" operation.
-// - insertIntoSlice: Inserts a value into a slice at the given index.
-// - applyRemove: Applies a "remove" operation.
-// - removeFromSlice: Removes an element from a slice.
-// - applyReplace: Applies a "replace" operation.
-// - replaceInSlice: Replaces an element in a slice.
-// - applyMove: Applies a "move" operation.
-// - getFromSlice: Retrieves a value from a slice.
 package jsonpatch
 
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -43,25 +16,6 @@ type Patch struct {
 	Value interface{} `json:"value,omitempty"`
 }
 
-// GeneratePatch compares two documents and returns patch operations.
-// GeneratePatch generates a JSON patch that describes the differences between
-// the "before" and "after" JSON documents. The function returns a slice of Patch
-// objects that represent the changes needed to transform the "before" document
-// into the "after" document.
-//
-// Parameters:
-// - before: The original JSON document, represented as an interface{}.
-// - after: The modified JSON document, represented as an interface{}.
-// - basePath: The base path for the JSON patch operations.
-//
-// Returns:
-//   - A slice of Patch objects representing the differences between the "before"
-//     and "after" documents.
-//   - An error if any issues occur during the patch generation process.
-//
-// The function processes keys in the "after" document to identify additions,
-// replacements, and nested changes. It also processes keys in the "before"
-// document to identify removals.
 func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) {
 	patches := []Patch{}
 	beforeMap, err := toMap(before)
@@ -73,19 +27,21 @@ func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) 
 		return nil, err
 	}
 
-	// Process keys in the "after" document.
+	// Process keys present in the "after" document.
 	for key, afterVal := range afterMap {
 		path := basePath + "/" + key
 		beforeVal, exists := beforeMap[key]
 		if !exists {
+			// New key found: add operation.
 			patches = append(patches, Patch{Op: "add", Path: path, Value: afterVal})
 			continue
 		}
-		// If types differ, emit a replace.
+		// If types differ, simply replace.
 		if reflect.TypeOf(beforeVal) != reflect.TypeOf(afterVal) {
 			patches = append(patches, Patch{Op: "replace", Path: path, Value: afterVal})
 			continue
 		}
+		// Handle slices (arrays) specially.
 		switch reflect.TypeOf(beforeVal).Kind() {
 		case reflect.Slice:
 			arrOps, err := generateArrayPatch(path, beforeVal, afterVal)
@@ -93,6 +49,7 @@ func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) 
 				return nil, err
 			}
 			patches = append(patches, arrOps...)
+		// For maps or structs, recurse.
 		case reflect.Map, reflect.Struct:
 			nested, err := GeneratePatch(beforeVal, afterVal, path)
 			if err != nil {
@@ -100,13 +57,14 @@ func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) 
 			}
 			patches = append(patches, nested...)
 		default:
+			// For simple types, compare with filtering.
 			if !deepEqualFiltered(beforeVal, afterVal) {
 				patches = append(patches, Patch{Op: "replace", Path: path, Value: afterVal})
 			}
 		}
 	}
 
-	// Process removals.
+	// Process removals for keys that are in "before" but not in "after".
 	for key := range beforeMap {
 		if _, exists := afterMap[key]; !exists {
 			patches = append(patches, Patch{Op: "remove", Path: basePath + "/" + key})
@@ -115,32 +73,13 @@ func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) 
 	return patches, nil
 }
 
-// ApplyPatch applies a series of JSON Patch operations to an original JSON object.
-// It supports the following operations: add, remove, replace, and move.
-//
-// Parameters:
-// - original: The original JSON object to which the patches will be applied.
-// - patches: A slice of Patch objects representing the operations to be applied.
-//
-// Returns:
-// - An updated JSON object with the patches applied.
-// - An error if any of the operations fail.
-//
-// Example usage:
-//
-//	patched, err := ApplyPatch(original, patches)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//
-// Note: The function assumes that the original JSON object is represented as an interface{} and
-//
-//	the patches are provided as a slice of Patch objects.
+// ApplyPatch applies a series of JSON Patch operations to the original JSON object.
 func ApplyPatch(original interface{}, patches []Patch) (interface{}, error) {
 	target, err := toMap(original)
 	if err != nil {
 		return nil, err
 	}
+	// Process each patch sequentially.
 	for _, op := range patches {
 		parts, err := parsePath(op.Path)
 		if err != nil {
@@ -172,7 +111,8 @@ func ApplyPatch(original interface{}, patches []Patch) (interface{}, error) {
 	return target, nil
 }
 
-// toMap converts a struct (or already a map) to a map[string]interface{} without JSON round-trips.
+// toMap converts a struct (or already a map) to a map[string]interface{} using reflection,
+// thus avoiding expensive JSON round-trips.
 func toMap(data interface{}) (map[string]interface{}, error) {
 	if m, ok := data.(map[string]interface{}); ok {
 		return m, nil
@@ -181,6 +121,7 @@ func toMap(data interface{}) (map[string]interface{}, error) {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
+	// Only structs are supported.
 	if v.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("unsupported type %T for conversion to map", data)
 	}
@@ -188,6 +129,7 @@ func toMap(data interface{}) (map[string]interface{}, error) {
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
+		// Use the json tag if available.
 		key := field.Name
 		if tag := field.Tag.Get("json"); tag != "" {
 			parts := strings.Split(tag, ",")
@@ -216,7 +158,8 @@ func toSlice(data interface{}) ([]interface{}, error) {
 	return result, nil
 }
 
-// deepEqualFiltered compares two values; for strings it trims whitespace.
+// deepEqualFiltered compares two values.
+// For strings, it compares trimmed values to ignore incidental whitespace differences.
 func deepEqualFiltered(a, b interface{}) bool {
 	aStr, aOk := a.(string)
 	bStr, bOk := b.(string)
@@ -226,7 +169,9 @@ func deepEqualFiltered(a, b interface{}) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// generateArrayPatch generates patch operations to transform one array into another.
+// generateArrayPatch produces patch operations to transform one array into another.
+// It first checks for a simple swap, then uses an improved diff based on the Longest Common
+// Subsequence (LCS) to generate minimal operations.
 func generateArrayPatch(basePath string, before, after interface{}) ([]Patch, error) {
 	beforeSlice, err := toSlice(before)
 	if err != nil {
@@ -237,7 +182,7 @@ func generateArrayPatch(basePath string, before, after interface{}) ([]Patch, er
 		return nil, err
 	}
 
-	// Detect a simple swap.
+	// Check for a simple swap: if exactly two elements differ and are swapped.
 	if len(beforeSlice) == len(afterSlice) {
 		var diffIndices []int
 		for i := 0; i < len(beforeSlice); i++ {
@@ -255,35 +200,155 @@ func generateArrayPatch(basePath string, before, after interface{}) ([]Patch, er
 		}
 	}
 
-	// Fallback: element-by-element diffing.
-	var patches []Patch
-	commonLen := len(beforeSlice)
-	if len(afterSlice) < commonLen {
-		commonLen = len(afterSlice)
+	// Use the improved LCS-based diff algorithm.
+	return improvedArrayDiff(basePath, beforeSlice, afterSlice)
+}
+
+// improvedArrayDiff computes the minimal set of "remove" and "add" operations to transform
+// beforeSlice into afterSlice using LCS. When the arrays have equal lengths, any matching
+// removal and addition at the same index are merged into a single "replace" operation.
+// improvedArrayDiff generates a list of JSON Patch operations to transform
+// beforeSlice into afterSlice. It uses the Longest Common Subsequence (LCS)
+// algorithm to find the minimal set of changes.
+//
+// Parameters:
+// - basePath: The base path for the JSON Patch operations.
+// - beforeSlice: The original slice of interface{} elements.
+// - afterSlice: The target slice of interface{} elements.
+//
+// Returns:
+//   - A slice of Patch objects representing the necessary changes to transform
+//     beforeSlice into afterSlice.
+//   - An error if any issues occur during the process.
+//
+// The function performs the following steps:
+//  1. Builds a DP table for the LCS of beforeSlice and afterSlice.
+//  2. Determines which indices are part of the LCS.
+//  3. Generates removal patches for elements in beforeSlice that are not in the LCS.
+//  4. Generates addition patches for elements in afterSlice that are not in the LCS.
+//  5. Combines removal and addition patches.
+//  6. If beforeSlice and afterSlice are of equal length, merges matching remove+add
+//     pairs into a "replace" operation.
+func improvedArrayDiff(basePath string, beforeSlice, afterSlice []interface{}) ([]Patch, error) {
+	m, n := len(beforeSlice), len(afterSlice)
+	// Build DP table for LCS.
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
 	}
-	for i := 0; i < commonLen; i++ {
-		if !deepEqualFiltered(beforeSlice[i], afterSlice[i]) {
-			patches = append(patches, Patch{
-				Op:    "replace",
-				Path:  basePath + "/" + strconv.Itoa(i),
-				Value: afterSlice[i],
+	for i := m - 1; i >= 0; i-- {
+		for j := n - 1; j >= 0; j-- {
+			if deepEqualFiltered(beforeSlice[i], afterSlice[j]) {
+				dp[i][j] = dp[i+1][j+1] + 1
+			} else {
+				if dp[i+1][j] >= dp[i][j+1] {
+					dp[i][j] = dp[i+1][j]
+				} else {
+					dp[i][j] = dp[i][j+1]
+				}
+			}
+		}
+	}
+
+	// Determine which indices are part of the LCS.
+	commonBefore := make(map[int]bool)
+	commonAfter := make(map[int]bool)
+	i, j := 0, 0
+	for i < m && j < n {
+		if deepEqualFiltered(beforeSlice[i], afterSlice[j]) {
+			commonBefore[i] = true
+			commonAfter[j] = true
+			i++
+			j++
+		} else if dp[i+1][j] >= dp[i][j+1] {
+			i++
+		} else {
+			j++
+		}
+	}
+
+	// Generate removal patches (in descending order).
+	var removals []Patch
+	for i := m - 1; i >= 0; i-- {
+		if !commonBefore[i] {
+			removals = append(removals, Patch{
+				Op:   "remove",
+				Path: basePath + "/" + strconv.Itoa(i),
 			})
 		}
 	}
-	for i := commonLen; i < len(afterSlice); i++ {
-		patches = append(patches, Patch{
-			Op:    "add",
-			Path:  basePath + "/" + strconv.Itoa(i),
-			Value: afterSlice[i],
-		})
+
+	// Generate addition patches (in ascending order).
+	var additions []Patch
+	for j := 0; j < n; j++ {
+		if !commonAfter[j] {
+			additions = append(additions, Patch{
+				Op:    "add",
+				Path:  basePath + "/" + strconv.Itoa(j),
+				Value: afterSlice[j],
+			})
+		}
 	}
-	for i := len(afterSlice); i < len(beforeSlice); i++ {
-		patches = append(patches, Patch{
-			Op:   "remove",
-			Path: basePath + "/" + strconv.Itoa(i),
+
+	// Combine removals and additions.
+	patches := append(removals, additions...)
+
+	// If the arrays are equal in length, merge matching remove+add pairs into a "replace" op.
+	if m == n {
+		removalsMap := make(map[int]Patch)
+		additionsMap := make(map[int]Patch)
+		for _, p := range patches {
+			idx, err := parseIndexFromPath(p.Path)
+			if err != nil {
+				continue
+			}
+			if p.Op == "remove" {
+				removalsMap[idx] = p
+			} else if p.Op == "add" {
+				additionsMap[idx] = p
+			}
+		}
+		mergedMap := make(map[int]Patch)
+		for idx, remPatch := range removalsMap {
+			if addPatch, ok := additionsMap[idx]; ok {
+				// Merge into a replace operation.
+				mergedMap[idx] = Patch{
+					Op:    "replace",
+					Path:  remPatch.Path,
+					Value: addPatch.Value,
+				}
+			} else {
+				mergedMap[idx] = remPatch
+			}
+		}
+		for idx, addPatch := range additionsMap {
+			if _, ok := mergedMap[idx]; !ok {
+				mergedMap[idx] = addPatch
+			}
+		}
+		// Build a sorted slice of merged patches.
+		var merged []Patch
+		for _, p := range mergedMap {
+			merged = append(merged, p)
+		}
+		sort.Slice(merged, func(i, j int) bool {
+			idx1, _ := parseIndexFromPath(merged[i].Path)
+			idx2, _ := parseIndexFromPath(merged[j].Path)
+			return idx1 < idx2
 		})
+		return merged, nil
 	}
+
 	return patches, nil
+}
+
+// parseIndexFromPath extracts the last segment of a JSON pointer path as an integer.
+func parseIndexFromPath(path string) (int, error) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 {
+		return -1, fmt.Errorf("no parts in path: %s", path)
+	}
+	return strconv.Atoi(parts[len(parts)-1])
 }
 
 // parsePath splits a JSON pointer path into its components.
@@ -294,7 +359,8 @@ func parsePath(path string) ([]string, error) {
 	return strings.Split(strings.Trim(path, "/"), "/"), nil
 }
 
-// isTwoPartArray checks if the path has exactly two parts and that the first part refers to an array.
+// isTwoPartArray checks if the path has exactly two parts and that the first part
+// refers to an array in the target object.
 func isTwoPartArray(target map[string]interface{}, parts []string) (string, int, error) {
 	if len(parts) != 2 {
 		return "", -1, fmt.Errorf("expected 2 parts, got %d", len(parts))
@@ -311,17 +377,19 @@ func isTwoPartArray(target map[string]interface{}, parts []string) (string, int,
 	return key, idx, nil
 }
 
-// traverseToParent walks the target object to the parent of the final key.
+// traverseToParent walks the target object to the parent of the final key in the path.
 func traverseToParent(target map[string]interface{}, parts []string) (map[string]interface{}, string, bool, int, error) {
 	parent := target
+	// Iterate through all but the last segment.
 	for i := 0; i < len(parts)-1; i++ {
 		part := parts[i]
 		val, exists := parent[part]
 		if !exists {
 			return nil, "", false, -1, fmt.Errorf("path %s does not exist", strings.Join(parts[:i+1], "/"))
 		}
+		// If we're at the second-to-last segment and the value is an array,
+		// then treat the next segment as an index.
 		if i == len(parts)-2 {
-			// If the value is an array, treat the next part as an index.
 			if arr, ok := val.([]interface{}); ok {
 				j, err := strconv.Atoi(parts[i+1])
 				if err != nil || j < 0 || j >= len(arr) {
@@ -346,9 +414,9 @@ func traverseToParent(target map[string]interface{}, parts []string) (map[string
 	return parent, parts[len(parts)-1], false, -1, nil
 }
 
-// applyAdd applies an "add" operation.
+// applyAdd applies an "add" operation at the given path with the specified value.
 func applyAdd(target map[string]interface{}, parts []string, value interface{}) error {
-	// Special handling: if two parts and target[parts[0]] is an array and index equals len.
+	// Special handling for a two-part path that targets an array's end.
 	if len(parts) == 2 {
 		if arr, ok := target[parts[0]].([]interface{}); ok {
 			idx, err := strconv.Atoi(parts[1])
@@ -368,6 +436,7 @@ func applyAdd(target map[string]interface{}, parts []string, value interface{}) 
 		}
 		return nil
 	}
+	// Otherwise, traverse to the parent container.
 	parent, key, isArr, idx, err := traverseToParent(target, parts)
 	if err != nil {
 		return err
@@ -379,7 +448,7 @@ func applyAdd(target map[string]interface{}, parts []string, value interface{}) 
 	return nil
 }
 
-// insertIntoSlice inserts a value into a slice at the given index.
+// insertIntoSlice inserts a value into a slice at the specified index.
 func insertIntoSlice(parent map[string]interface{}, key string, index int, value interface{}) error {
 	arr, ok := parent[key].([]interface{})
 	if !ok {
@@ -397,7 +466,7 @@ func insertIntoSlice(parent map[string]interface{}, key string, index int, value
 	return nil
 }
 
-// applyRemove applies a "remove" operation.
+// applyRemove applies a "remove" operation at the given path.
 func applyRemove(target map[string]interface{}, parts []string) error {
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
 		arr := target[key].([]interface{})
@@ -418,7 +487,7 @@ func applyRemove(target map[string]interface{}, parts []string) error {
 	return nil
 }
 
-// removeFromSlice removes an element from a slice.
+// removeFromSlice removes an element from a slice at the given index.
 func removeFromSlice(parent map[string]interface{}, key string, index int) error {
 	arr, ok := parent[key].([]interface{})
 	if !ok || index < 0 || index >= len(arr) {
@@ -428,7 +497,7 @@ func removeFromSlice(parent map[string]interface{}, key string, index int) error
 	return nil
 }
 
-// applyReplace applies a "replace" operation.
+// applyReplace applies a "replace" operation at the given path.
 func applyReplace(target map[string]interface{}, parts []string, value interface{}) error {
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
 		arr := target[key].([]interface{})
@@ -450,7 +519,7 @@ func applyReplace(target map[string]interface{}, parts []string, value interface
 	return nil
 }
 
-// replaceInSlice replaces an element in a slice.
+// replaceInSlice replaces an element in a slice at the specified index.
 func replaceInSlice(parent map[string]interface{}, key string, index int, value interface{}) error {
 	arr, ok := parent[key].([]interface{})
 	if !ok || index < 0 || index >= len(arr) {
@@ -461,9 +530,10 @@ func replaceInSlice(parent map[string]interface{}, key string, index int, value 
 	return nil
 }
 
-// applyMove applies a "move" operation.
+// applyMove applies a "move" operation from one path to another.
 func applyMove(target map[string]interface{}, fromParts, toParts []string) error {
 	var value interface{}
+	// Retrieve the value from the "from" path.
 	if key, idx, err := isTwoPartArray(target, fromParts); err == nil {
 		arr := target[key].([]interface{})
 		value = arr[idx]
@@ -478,13 +548,15 @@ func applyMove(target map[string]interface{}, fromParts, toParts []string) error
 			value = parent[key]
 		}
 	}
+	// Remove from the original location.
 	if err := applyRemove(target, fromParts); err != nil {
 		return err
 	}
+	// Add at the new location.
 	return applyAdd(target, toParts, value)
 }
 
-// getFromSlice retrieves a value from a slice.
+// getFromSlice retrieves a value from a slice at the specified index.
 func getFromSlice(parent map[string]interface{}, key string, index int) interface{} {
 	arr, ok := parent[key].([]interface{})
 	if !ok || index < 0 || index >= len(arr) {
