@@ -34,6 +34,10 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 	}
 
 	schema := make(map[string]interface{})
+
+	// Set the schema version
+	schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+
 	switch t.Kind() {
 	case reflect.Struct:
 		schema["type"] = "object"
