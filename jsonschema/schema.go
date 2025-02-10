@@ -1,6 +1,8 @@
 package jsonschema
 
 import (
+	"encoding/json"
+	"log/slog"
 	"reflect"
 	"strconv"
 	"strings"
@@ -34,9 +36,6 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 	}
 
 	schema := make(map[string]interface{})
-
-	// Set the schema version
-	schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 
 	switch t.Kind() {
 	case reflect.Struct:
@@ -202,4 +201,14 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 		schema["type"] = "string"
 	}
 	return schema
+}
+
+func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
+	schema := GenerateSchema(t)
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		slog.Error("Error marshalling schema", "error", err)
+		return nil
+	}
+	return raw
 }
