@@ -129,3 +129,69 @@ if err != nil {
     // handle error
 }
 ```
+
+## Polymorphic JSON
+
+The `polymorphic` package provides utilities to handle polymorphic JSON serialization and deserialization. It allows you to register types with a discriminator and serialize/deserialize JSON data with type information.
+
+### Features
+
+- Register types with a discriminator.
+- Serialize objects with type information.
+- Deserialize JSON data into the correct type based on the discriminator.
+
+### Usage
+
+To register a type:
+
+```go
+import "github.com/fgrzl/json/polymorphic"
+
+type Animal struct {
+    Name string `json:"name"`
+}
+
+type Dog struct {
+    Animal
+    Breed string `json:"breed"`
+}
+
+func init() {
+    polymorphic.Register("dog", func() any { return &Dog{} })
+}
+```
+
+To serialize an object:
+
+```go
+import "github.com/fgrzl/json/polymorphic"
+
+dog := &Dog{
+    Animal: Animal{Name: "Buddy"},
+    Breed:  "Golden Retriever",
+}
+
+data, err := polymorphic.MarshalPolymorphicJSON("dog", dog)
+if err != nil {
+    // handle error
+}
+fmt.Println(string(data))
+```
+
+To deserialize JSON data:
+
+```go
+import "github.com/fgrzl/json/polymorphic"
+
+var envelope polymorphic.Envelope
+err := json.Unmarshal(data, &envelope)
+if err != nil {
+    // handle error
+}
+
+dog, ok := envelope.Content.(*Dog)
+if !ok {
+    // handle error
+}
+fmt.Printf("Deserialized dog: %+v\n", dog)
+```
