@@ -1,3 +1,27 @@
+// Package polymorphic provides functionality for registering and handling
+// polymorphic types in JSON serialization and deserialization. It allows
+// types to be registered with a discriminator string and provides methods
+// for marshaling and unmarshaling JSON data with type information.
+//
+// TypeFactory is a function type that creates instances of registered types.
+//
+// Register registers a type with a given discriminator string and factory function.
+//
+// LoadFactory retrieves a factory function for a given discriminator string.
+//
+// NewEnvelope creates a new Envelope with the given discriminator and content.
+//
+// MarshalPolymorphicJSON marshals an object with a discriminator into JSON.
+//
+// Envelope is a struct that holds type information and raw JSON data.
+// It implements the json.Marshaler and json.Unmarshaler interfaces.
+//
+// MarshalJSON marshals the Envelope into JSON, ensuring the type is registered
+// and the content is properly serialized.
+//
+// UnmarshalJSON unmarshals JSON data into the Envelope, extracting the
+// discriminator and content, and deserializing the content into the appropriate
+// type using the registered factory function.
 package polymorphic
 
 import (
@@ -24,6 +48,21 @@ func LoadFactory(discriminator string) (TypeFactory, error) {
 		}
 	}
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
+}
+
+// Create a new Envelope with a discriminator and content
+func NewEnvelope(discriminator string, obj any) *Envelope {
+	return &Envelope{
+		Discriminator: discriminator,
+		Content:       obj,
+	}
+}
+
+// Marshal an object with a discriminator
+func MarshalPolymorphicJSON(discriminator string, obj any) ([]byte, error) {
+	// Wrap the object in Envelope and let MarshalJSON handle validation
+	wrapper := NewEnvelope(discriminator, obj)
+	return json.Marshal(wrapper)
 }
 
 // Envelope holds type info and raw JSON data
@@ -55,6 +94,18 @@ func (e *Envelope) MarshalJSON() ([]byte, error) {
 }
 
 // Implements json.Unmarshaler
+// UnmarshalJSON is a custom JSON unmarshaler for the Envelope type.
+// It extracts the raw JSON data into a map and looks for a discriminator
+// field named "$type" to determine the concrete type of the content.
+// The content is then unmarshaled into the appropriate type using a factory
+// function registered for the discriminator. If any required fields are missing
+// or if unmarshaling fails, an error is returned.
+//
+// Parameters:
+// - data: The JSON-encoded data to be unmarshaled.
+//
+// Returns:
+// - error: An error if unmarshaling fails or if required fields are missing.
 func (e *Envelope) UnmarshalJSON(data []byte) error {
 	// Extract raw data without assuming structure
 	aux := make(map[string]json.RawMessage)
@@ -92,15 +143,4 @@ func (e *Envelope) UnmarshalJSON(data []byte) error {
 
 	e.Content = instance
 	return nil
-}
-
-// Marshal an object with a discriminator
-func MarshalPolymorphicJSON(discriminator string, obj any) ([]byte, error) {
-	// Wrap the object in Envelope and let MarshalJSON handle validation
-	wrapper := &Envelope{
-		Discriminator: discriminator,
-		Content:       obj,
-	}
-
-	return json.Marshal(wrapper)
 }
