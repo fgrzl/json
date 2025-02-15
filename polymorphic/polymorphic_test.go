@@ -9,11 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type Person struct {
-	Name string `json:"name"`
-	Age  int    `json:"age"`
-}
-
 func resetRegistry() {
 	polymorphicTypes := new(sync.Map)
 	polymorphicTypes.Range(func(key, value any) bool {
@@ -183,4 +178,30 @@ func TestPolymorphicContent_MultipleTypes(t *testing.T) {
 	assert.True(t, okCar, "Content should be of type *Car")
 	assert.Equal(t, "Tesla", carObj.Make, "Car make should be 'Tesla'")
 	assert.Equal(t, "Model S", carObj.Model, "Car model should be 'Model S'")
+}
+
+type Person struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+// Implement the Discriminator interface
+func (e Person) GetDiscriminator() string {
+	return "person"
+}
+
+func TestRegisterType(t *testing.T) {
+	// Arrange
+	resetRegistry()
+
+	// Act
+	polymorphic.RegisterType[Person]()
+
+	// Assert
+	instance, err := polymorphic.CreateInstance("person")
+	assert.NoError(t, err, "Creating instance should not produce an error")
+	assert.NotNil(t, instance, "Instance should not be nil")
+
+	_, ok := instance.(*Person)
+	assert.True(t, ok, "Factory should return an instance of *Person")
 }

@@ -1,54 +1,9 @@
-// Package polymorphic provides functionality for registering and handling
-// polymorphic types in JSON serialization and deserialization. It allows
-// types to be registered with a discriminator string and provides methods
-// for marshaling and unmarshaling JSON data with type information.
-//
-// TypeFactory is a function type that creates instances of registered types.
-//
-// Register registers a type with a given discriminator string and factory function.
-//
-// LoadFactory retrieves a factory function for a given discriminator string.
-//
-// NewEnvelope creates a new Envelope with the given discriminator and content.
-//
-// MarshalPolymorphicJSON marshals an object with a discriminator into JSON.
-//
-// Envelope is a struct that holds type information and raw JSON data.
-// It implements the json.Marshaler and json.Unmarshaler interfaces.
-//
-// MarshalJSON marshals the Envelope into JSON, ensuring the type is registered
-// and the content is properly serialized.
-//
-// UnmarshalJSON unmarshals JSON data into the Envelope, extracting the
-// discriminator and content, and deserializing the content into the appropriate
-// type using the registered factory function.
 package polymorphic
 
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 )
-
-// TypeFactory creates instances of registered types
-type TypeFactory func() any
-
-var types sync.Map
-
-// Register a type with a discriminator
-func Register(discriminator string, factory TypeFactory) {
-	types.Store(discriminator, factory)
-}
-
-// Retrieve a factory function
-func LoadFactory(discriminator string) (TypeFactory, error) {
-	if value, ok := types.Load(discriminator); ok {
-		if factory, ok := value.(TypeFactory); ok {
-			return factory, nil
-		}
-	}
-	return nil, fmt.Errorf("type %q is not registered", discriminator)
-}
 
 // Create a new Envelope with a discriminator and content
 func NewEnvelope(discriminator string, obj any) *Envelope {
