@@ -2,28 +2,19 @@ package polymorphic_test
 
 import (
 	"encoding/json"
-	"sync"
 	"testing"
 
 	"github.com/fgrzl/json/polymorphic"
 	"github.com/stretchr/testify/assert"
 )
 
-func resetRegistry() {
-	polymorphicTypes := new(sync.Map)
-	polymorphicTypes.Range(func(key, value any) bool {
-		polymorphicTypes.Delete(key)
-		return true
-	})
-}
-
 func TestRegisterAndLoadFactory(t *testing.T) {
 	// Arrange
-	resetRegistry()
-	polymorphic.Register("Person", func() any { return &Person{} })
+	polymorphic.ClearRegistry()
+	polymorphic.Register[Person]()
 
 	// Act
-	factory, err := polymorphic.LoadFactory("Person")
+	factory, err := polymorphic.LoadFactory("person")
 
 	// Assert
 	assert.NoError(t, err, "Loading registered factory should not produce an error")
@@ -42,11 +33,11 @@ func TestLoadFactory_UnregisteredType(t *testing.T) {
 
 func TestFactoryCreatesInstance(t *testing.T) {
 	// Arrange
-	resetRegistry()
-	polymorphic.Register("Person", func() any { return &Person{} })
+	polymorphic.ClearRegistry()
+	polymorphic.Register[Person]()
 
 	// Act
-	factory, _ := polymorphic.LoadFactory("Person")
+	factory, _ := polymorphic.LoadFactory("person")
 	instance := factory()
 
 	// Assert
@@ -56,48 +47,48 @@ func TestFactoryCreatesInstance(t *testing.T) {
 
 func TestMarshalPolymorphicJSON(t *testing.T) {
 	// Arrange
-	resetRegistry()
-	polymorphic.Register("Person", func() any { return &Person{} })
+	polymorphic.ClearRegistry()
+	polymorphic.Register[Person]()
 	person := &Person{Name: "Alice", Age: 30}
 
 	// Act
-	jsonBytes, err := polymorphic.MarshalPolymorphicJSON("Person", person)
+	jsonBytes, err := polymorphic.MarshalPolymorphicJSON(person)
 
 	// Assert
 	assert.NoError(t, err, "Marshaling should not produce an error")
-	expectedJSON := `{"$type":"Person","content":{"name":"Alice","age":30}}`
+	expectedJSON := `{"$type":"person","content":{"name":"Alice","age":30}}`
 	assert.JSONEq(t, expectedJSON, string(jsonBytes), "Marshaled JSON should match expected output")
 }
 
 func TestMarshal_UnregisteredTypeFails(t *testing.T) {
 	// Arrange
-	resetRegistry()
+	polymorphic.ClearRegistry()
 	obj := &Person{Name: "Bob", Age: 40}
 
 	// Act
-	_, err := polymorphic.MarshalPolymorphicJSON("UnregisteredPerson", obj)
+	_, err := polymorphic.MarshalPolymorphicJSON(obj)
 
 	// Assert
 	assert.Error(t, err, "Marshaling should fail for an unregistered type")
-	assert.ErrorContains(t, err, "type \"UnregisteredPerson\" is not registered")
+	assert.ErrorContains(t, err, "type \"person\" is not registered")
 }
 
 func TestUnmarshalPolymorphicJSON(t *testing.T) {
 	// Arrange
-	resetRegistry()
-	polymorphic.Register("Person", func() any { return &Person{} })
-	jsonStr := `{"$type":"Person","content":{"name":"Alice","age":30}}`
+	polymorphic.ClearRegistry()
+	polymorphic.Register[Person]()
+	jsonStr := `{"$type":"person","content":{"name":"Alice","age":30}}`
 
 	// Act
-	var content polymorphic.Envelope
-	err := json.Unmarshal([]byte(jsonStr), &content)
+	var envelope polymorphic.Envelope
+	err := json.Unmarshal([]byte(jsonStr), &envelope)
 
 	// Assert
 	assert.NoError(t, err, "Unmarshaling should not produce an error")
-	assert.Equal(t, "Person", content.Discriminator, "Discriminator should match expected value")
+	assert.Equal(t, "person", envelope.Discriminator, "Discriminator should match expected value")
 
 	// Extract the content
-	personObj, ok := content.Content.(*Person)
+	personObj, ok := envelope.Content.(*Person)
 
 	// Assert that content is correctly deserialized
 	assert.True(t, ok, "Content should be of type *Person")
@@ -120,9 +111,9 @@ func TestUnmarshal_UnknownTypeFails(t *testing.T) {
 
 func TestUnmarshal_MissingContentFails(t *testing.T) {
 	// Arrange
-	resetRegistry()
-	polymorphic.Register("Person", func() any { return &Person{} })
-	jsonStr := `{"$type":"Person"}`
+	polymorphic.ClearRegistry()
+	polymorphic.Register[Person]()
+	jsonStr := `{"$type":"person"}`
 
 	// Act
 	var content polymorphic.Envelope
@@ -130,25 +121,22 @@ func TestUnmarshal_MissingContentFails(t *testing.T) {
 
 	// Assert
 	assert.Error(t, err, "Unmarshaling should fail if content is missing")
-	assert.ErrorContains(t, err, "missing content for type: \"Person\"", "Error should indicate missing content")
+	assert.ErrorContains(t, err, "missing content for type: \"person\"", "Error should indicate missing content")
 }
 
 func TestPolymorphicContent_MultipleTypes(t *testing.T) {
 	// Arrange: Define and register multiple types
-	resetRegistry()
-	type Car struct {
-		Make  string `json:"make"`
-		Model string `json:"model"`
-	}
-	polymorphic.Register("Person", func() any { return &Person{} })
-	polymorphic.Register("Car", func() any { return &Car{} })
+	polymorphic.ClearRegistry()
+
+	polymorphic.Register[Person]()
+	polymorphic.Register[Car]()
 
 	person := &Person{Name: "Alice", Age: 30}
 	car := &Car{Make: "Tesla", Model: "Model S"}
 
 	// Act: Serialize both
-	personJSON, errPerson := polymorphic.MarshalPolymorphicJSON("Person", person)
-	carJSON, errCar := polymorphic.MarshalPolymorphicJSON("Car", car)
+	personJSON, errPerson := polymorphic.MarshalPolymorphicJSON(person)
+	carJSON, errCar := polymorphic.MarshalPolymorphicJSON(car)
 
 	// Assert: No errors
 	assert.NoError(t, errPerson, "Marshaling Person should not produce an error")
@@ -164,8 +152,8 @@ func TestPolymorphicContent_MultipleTypes(t *testing.T) {
 	assert.NoError(t, errCarUnmarshal, "Unmarshaling Car should not produce an error")
 
 	// Assert: Correct types
-	assert.Equal(t, "Person", personContent.Discriminator, "Person discriminator should match")
-	assert.Equal(t, "Car", carContent.Discriminator, "Car discriminator should match")
+	assert.Equal(t, "person", personContent.Discriminator, "Person discriminator should match")
+	assert.Equal(t, "car", carContent.Discriminator, "Car discriminator should match")
 
 	// Assert: Correct values
 	personObj, okPerson := personContent.Content.(*Person)
@@ -180,6 +168,16 @@ func TestPolymorphicContent_MultipleTypes(t *testing.T) {
 	assert.Equal(t, "Model S", carObj.Model, "Car model should be 'Model S'")
 }
 
+type Car struct {
+	Make  string `json:"make"`
+	Model string `json:"model"`
+}
+
+// Implement the Discriminator interface
+func (e Car) GetDiscriminator() string {
+	return "car"
+}
+
 type Person struct {
 	Name string `json:"name"`
 	Age  int    `json:"age"`
@@ -188,20 +186,4 @@ type Person struct {
 // Implement the Discriminator interface
 func (e Person) GetDiscriminator() string {
 	return "person"
-}
-
-func TestRegisterType(t *testing.T) {
-	// Arrange
-	resetRegistry()
-
-	// Act
-	polymorphic.RegisterType[Person]()
-
-	// Assert
-	instance, err := polymorphic.CreateInstance("person")
-	assert.NoError(t, err, "Creating instance should not produce an error")
-	assert.NotNil(t, instance, "Instance should not be nil")
-
-	_, ok := instance.(*Person)
-	assert.True(t, ok, "Factory should return an instance of *Person")
 }

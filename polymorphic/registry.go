@@ -5,22 +5,22 @@ import (
 	"sync"
 )
 
-// Discriminator ensures types implement GetDiscriminator().
-type Discriminator interface {
+// Polymorphic ensures types implement GetDiscriminator().
+type Polymorphic interface {
 	GetDiscriminator() string
 }
 
 // TypeFactory creates instances of registered types.
-type TypeFactory func() any
+type TypeFactory = func() any
 
 var types sync.Map
 
 // Register stores a factory function with its discriminator.
-func Register(discriminator string, factory TypeFactory) {
+func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
 	types.Store(discriminator, factory)
 }
 
-func RegisterType[T Discriminator]() {
+func Register[T Polymorphic]() {
 	// Ensure T is a pointer at compile-time
 	var instance T
 
@@ -32,7 +32,7 @@ func RegisterType[T Discriminator]() {
 		return new(T)
 	}
 
-	Register(discriminator, factory)
+	RegisterWithDiscriminator(discriminator, factory)
 }
 
 // CreateInstance creates an instance based on the discriminator.
@@ -43,10 +43,20 @@ func CreateInstance(discriminator string) (any, error) {
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
 }
 
-// LoadFactory retrieves the factory function associated with the discriminator.
 func LoadFactory(discriminator string) (TypeFactory, error) {
 	if factory, ok := types.Load(discriminator); ok {
-		return factory.(TypeFactory), nil
+		typedFactory, ok := factory.(TypeFactory)
+		if !ok {
+			return nil, fmt.Errorf("invalid factory type for %q", discriminator)
+		}
+		return typedFactory, nil
 	}
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
+}
+
+func ClearRegistry() {
+	types.Range(func(k, v any) bool {
+		types.Delete(k)
+		return true
+	})
 }

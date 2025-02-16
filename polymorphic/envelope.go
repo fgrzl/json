@@ -6,17 +6,17 @@ import (
 )
 
 // Create a new Envelope with a discriminator and content
-func NewEnvelope(discriminator string, obj any) *Envelope {
+func NewEnvelope(obj Polymorphic) *Envelope {
 	return &Envelope{
-		Discriminator: discriminator,
+		Discriminator: obj.GetDiscriminator(),
 		Content:       obj,
 	}
 }
 
 // Marshal an object with a discriminator
-func MarshalPolymorphicJSON(discriminator string, obj any) ([]byte, error) {
+func MarshalPolymorphicJSON(obj Polymorphic) ([]byte, error) {
 	// Wrap the object in Envelope and let MarshalJSON handle validation
-	wrapper := NewEnvelope(discriminator, obj)
+	wrapper := NewEnvelope(obj)
 	return json.Marshal(wrapper)
 }
 
