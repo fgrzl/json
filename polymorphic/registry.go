@@ -20,19 +20,14 @@ func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
 	types.Store(discriminator, factory)
 }
 
-func Register[T Polymorphic]() {
+func Register[T Polymorphic](factory func() T) {
 	// Ensure T is a pointer at compile-time
 	var instance T
 
 	// Get discriminator
 	discriminator := instance.GetDiscriminator()
 
-	// Factory function that guarantees a non-nil instance
-	factory := func() any {
-		return new(T)
-	}
-
-	RegisterWithDiscriminator(discriminator, factory)
+	RegisterWithDiscriminator(discriminator, func() any { return factory() })
 }
 
 // CreateInstance creates an instance based on the discriminator.

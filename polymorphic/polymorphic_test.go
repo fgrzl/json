@@ -11,7 +11,7 @@ import (
 func TestRegisterAndLoadFactory(t *testing.T) {
 	// Arrange
 	polymorphic.ClearRegistry()
-	polymorphic.Register[Person]()
+	polymorphic.Register(func() *Person { return &Person{} })
 
 	// Act
 	factory, err := polymorphic.LoadFactory("person")
@@ -34,7 +34,7 @@ func TestLoadFactory_UnregisteredType(t *testing.T) {
 func TestFactoryCreatesInstance(t *testing.T) {
 	// Arrange
 	polymorphic.ClearRegistry()
-	polymorphic.Register[Person]()
+	polymorphic.Register(func() *Person { return &Person{} })
 
 	// Act
 	factory, _ := polymorphic.LoadFactory("person")
@@ -48,7 +48,7 @@ func TestFactoryCreatesInstance(t *testing.T) {
 func TestMarshalPolymorphicJSON(t *testing.T) {
 	// Arrange
 	polymorphic.ClearRegistry()
-	polymorphic.Register[Person]()
+	polymorphic.Register(func() *Person { return &Person{} })
 	person := &Person{Name: "Alice", Age: 30}
 
 	// Act
@@ -76,7 +76,7 @@ func TestMarshal_UnregisteredTypeFails(t *testing.T) {
 func TestUnmarshalPolymorphicJSON(t *testing.T) {
 	// Arrange
 	polymorphic.ClearRegistry()
-	polymorphic.Register[Person]()
+	polymorphic.Register(func() *Person { return &Person{} })
 	jsonStr := `{"$type":"person","content":{"name":"Alice","age":30}}`
 
 	// Act
@@ -112,7 +112,7 @@ func TestUnmarshal_UnknownTypeFails(t *testing.T) {
 func TestUnmarshal_MissingContentFails(t *testing.T) {
 	// Arrange
 	polymorphic.ClearRegistry()
-	polymorphic.Register[Person]()
+	polymorphic.Register(func() *Person { return &Person{} })
 	jsonStr := `{"$type":"person"}`
 
 	// Act
@@ -128,8 +128,8 @@ func TestPolymorphicContent_MultipleTypes(t *testing.T) {
 	// Arrange: Define and register multiple types
 	polymorphic.ClearRegistry()
 
-	polymorphic.Register[Person]()
-	polymorphic.Register[Car]()
+	polymorphic.Register(func() *Person { return &Person{} })
+	polymorphic.Register(func() *Car { return &Car{} })
 
 	person := &Person{Name: "Alice", Age: 30}
 	car := &Car{Make: "Tesla", Model: "Model S"}
@@ -174,7 +174,7 @@ type Car struct {
 }
 
 // Implement the Discriminator interface
-func (e Car) GetDiscriminator() string {
+func (e *Car) GetDiscriminator() string {
 	return "car"
 }
 
@@ -184,6 +184,6 @@ type Person struct {
 }
 
 // Implement the Discriminator interface
-func (e Person) GetDiscriminator() string {
+func (e *Person) GetDiscriminator() string {
 	return "person"
 }
