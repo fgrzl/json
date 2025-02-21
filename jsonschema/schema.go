@@ -120,6 +120,11 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 				fieldSchema["enum"] = parts
 			}
 
+			// Add dataSource support
+			if sourceProvider := field.Tag.Get("dataSource"); sourceProvider != "" {
+				fieldSchema["dataSource"] = sourceProvider
+			}
+
 			// Metadata
 			if v := field.Tag.Get("title"); v != "" {
 				fieldSchema["title"] = v
