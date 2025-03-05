@@ -349,3 +349,20 @@ func TestGenerateThenApply_PreserveData(t *testing.T) {
 	afterBytes, _ := json.Marshal(after)
 	assert.Equal(t, string(afterBytes), string(resultBytes), "The final document should match the expected state")
 }
+
+func TestPatchMarshalRoundtrip(t *testing.T) {
+	patch := []Patch{
+		{Op: "move", Path: "/third", From: "/first", Value: nil},
+	}
+
+	// Act
+	jsonBytes, err := json.Marshal(patch)
+	require.NoError(t, err)
+
+	var unmarshaledPatch []Patch
+	err = json.Unmarshal(jsonBytes, &unmarshaledPatch)
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, patch, unmarshaledPatch, "Unmarshaled patch should match the original")
+}
