@@ -79,8 +79,8 @@ func main() {
   - `dataSource` : Specifies a keyword to indicate options
   - `componentId` : Specifies a UI component ID
 
+**define the data source as an API**
 ```json
-// define the data source as and API endpoint
 {
   "type": "object",
   "properties": {
@@ -95,8 +95,11 @@ func main() {
     }
   }
 }
+```
 
-// define the data source as a token
+
+**define the data source as a token**
+```json
 {
   "type": "object",
   "properties": {
@@ -106,7 +109,6 @@ func main() {
     }
   }
 }
-
 ```
 
 - **Composition keywords**:
