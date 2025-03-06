@@ -121,8 +121,13 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 			}
 
 			// Add dataSource support
-			if sourceProvider := field.Tag.Get("dataSource"); sourceProvider != "" {
-				fieldSchema["dataSource"] = sourceProvider
+			if dataSource := field.Tag.Get("dataSource"); dataSource != "" {
+				fieldSchema["dataSource"] = dataSource
+			}
+
+			// Add dataSource support
+			if component := field.Tag.Get("componentId"); component != "" {
+				fieldSchema["componentId"] = component
 			}
 
 			// Metadata

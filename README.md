@@ -75,6 +75,38 @@ func main() {
   - `title`: Specifies the title of the schema.
   - `description`: Specifies the description of the schema.
   - `default`: Specifies the default value.
+  - `dataSource` : Specifies a keyword to indicate options
+  - `componentId` : Specifies a UI component ID
+
+```json
+// define the data source as and API endpoint
+{
+  "type": "object",
+  "properties": {
+    "category": {
+      "type": "string",
+      "dataSource": {
+        "url": "https://api.example.com/categories",
+        "method": "GET",
+        "valueField": "id",
+        "labelField": "name"
+      }
+    }
+  }
+}
+
+// define the data source as a token
+{
+  "type": "object",
+  "properties": {
+    "category": {
+      "type": "string",
+      "dataSource": "categories"
+    }
+  }
+}
+
+```
 
 - **Composition keywords**:
   - `oneOf`: Specifies a comma-separated list of schemas, one of which must be valid.
