@@ -8,27 +8,50 @@ import (
 	"strings"
 )
 
+// Unified constants for JSON schema keys and type values
+const (
+	// Schema Keys
+	TypeKey                 = "type"
+	PropertiesKey           = "properties"
+	RequiredKey             = "required"
+	ItemsKey                = "items"
+	AdditionalPropertiesKey = "additionalProperties"
+	RefKey                  = "$ref"
+	MinimumKey              = "minimum"
+	MaximumKey              = "maximum"
+	MultipleOfKey           = "multipleOf"
+	MinLengthKey            = "minLength"
+	MaxLengthKey            = "maxLength"
+	PatternKey              = "pattern"
+	FormatKey               = "format"
+	MinItemsKey             = "minItems"
+	MaxItemsKey             = "maxItems"
+	UniqueItemsKey          = "uniqueItems"
+	EnumKey                 = "enum"
+	TitleKey                = "title"
+	DescriptionKey          = "description"
+	DefaultKey              = "default"
+	OneOfKey                = "oneOf"
+	AnyOfKey                = "anyOf"
+	AllOfKey                = "allOf"
+	NotKey                  = "not"
+	DataSourceKey           = "dataSource"
+	ComponentIDKey          = "componentId"
+	DependencyIDKey         = "dependencyId"
+
+	// JSON struct tag keys
+	JSONTag = "json"
+
+	// Schema Type Values
+	TypeArray   = "array"
+	TypeObject  = "object"
+	TypeInteger = "integer"
+	TypeNumber  = "number"
+	TypeBoolean = "boolean"
+	TypeString  = "string"
+)
+
 // GenerateSchema produces a JSON Schema (as a map) for the given Go type.
-// GenerateSchema generates a JSON schema for a given Go type using reflection.
-// It supports various JSON schema constraints and annotations through struct tags.
-//
-// Supported struct tags:
-// - json: Specifies the JSON field name.
-// - ref: Specifies a schema reference.
-// - minimum, maximum, multipleOf: Numeric constraints for integer and number types.
-// - minLength, maxLength, pattern, format: String constraints.
-// - minItems, maxItems, uniqueItems: Array constraints.
-// - enum: Specifies allowed values for the field.
-// - title, description, default: Metadata for the field.
-// - oneOf, anyOf, allOf, not: Composition keywords for schema definitions.
-// - required: Marks the field as required.
-// - additionalProperties: Specifies additional properties for object types.
-//
-// Parameters:
-// - t (reflect.Type): The Go type to generate the schema for.
-//
-// Returns:
-// - map[string]interface{}: The generated JSON schema as a map.
 func GenerateSchema(t reflect.Type) map[string]interface{} {
 	// Unwrap pointer types.
 	if t.Kind() == reflect.Ptr {
@@ -39,180 +62,152 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 
 	switch t.Kind() {
 	case reflect.Struct:
-		schema["type"] = "object"
+		schema[TypeKey] = TypeObject
 		props := make(map[string]interface{})
 		var requiredFields []string
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
-			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			name := strings.Split(field.Tag.Get(JSONTag), ",")[0]
 			if name == "" {
 				name = field.Name
 			}
 			// If a "ref" tag is provided, use that schema reference.
-			if refTag := field.Tag.Get("ref"); refTag != "" {
-				props[name] = map[string]interface{}{"$ref": refTag}
+			if refTag := field.Tag.Get(RefKey); refTag != "" {
+				props[name] = map[string]interface{}{RefKey: refTag}
 				continue
 			}
 			fieldSchema := GenerateSchema(field.Type)
 
 			// Numeric constraints
-			if typ, ok := fieldSchema["type"].(string); ok && (typ == "integer" || typ == "number") {
-				if v := field.Tag.Get("minimum"); v != "" {
+			if typ, ok := fieldSchema[TypeKey].(string); ok && (typ == TypeInteger || typ == TypeNumber) {
+				if v := field.Tag.Get(MinimumKey); v != "" {
 					if num, err := strconv.ParseFloat(v, 64); err == nil {
-						fieldSchema["minimum"] = num
+						fieldSchema[MinimumKey] = num
 					}
 				}
-				if v := field.Tag.Get("maximum"); v != "" {
+				if v := field.Tag.Get(MaximumKey); v != "" {
 					if num, err := strconv.ParseFloat(v, 64); err == nil {
-						fieldSchema["maximum"] = num
+						fieldSchema[MaximumKey] = num
 					}
 				}
-				if v := field.Tag.Get("multipleOf"); v != "" {
+				if v := field.Tag.Get(MultipleOfKey); v != "" {
 					if num, err := strconv.ParseFloat(v, 64); err == nil {
-						fieldSchema["multipleOf"] = num
+						fieldSchema[MultipleOfKey] = num
 					}
 				}
 			}
 
 			// String constraints
-			if typ, ok := fieldSchema["type"].(string); ok && typ == "string" {
-				if v := field.Tag.Get("minLength"); v != "" {
+			if typ, ok := fieldSchema[TypeKey].(string); ok && typ == TypeString {
+				if v := field.Tag.Get(MinLengthKey); v != "" {
 					if num, err := strconv.Atoi(v); err == nil {
-						fieldSchema["minLength"] = num
+						fieldSchema[MinLengthKey] = num
 					}
 				}
-				if v := field.Tag.Get("maxLength"); v != "" {
+				if v := field.Tag.Get(MaxLengthKey); v != "" {
 					if num, err := strconv.Atoi(v); err == nil {
-						fieldSchema["maxLength"] = num
+						fieldSchema[MaxLengthKey] = num
 					}
 				}
-				if v := field.Tag.Get("pattern"); v != "" {
-					fieldSchema["pattern"] = v
+				if v := field.Tag.Get(PatternKey); v != "" {
+					fieldSchema[PatternKey] = v
 				}
-				if v := field.Tag.Get("format"); v != "" {
-					fieldSchema["format"] = v
+				if v := field.Tag.Get(FormatKey); v != "" {
+					fieldSchema[FormatKey] = v
 				}
 			}
 
 			// Array constraints
-			if typ, ok := fieldSchema["type"].(string); ok && typ == "array" {
-				if v := field.Tag.Get("minItems"); v != "" {
+			if typ, ok := fieldSchema[TypeKey].(string); ok && typ == TypeArray {
+				if v := field.Tag.Get(MinItemsKey); v != "" {
 					if num, err := strconv.Atoi(v); err == nil {
-						fieldSchema["minItems"] = num
+						fieldSchema[MinItemsKey] = num
 					}
 				}
-				if v := field.Tag.Get("maxItems"); v != "" {
+				if v := field.Tag.Get(MaxItemsKey); v != "" {
 					if num, err := strconv.Atoi(v); err == nil {
-						fieldSchema["maxItems"] = num
+						fieldSchema[MaxItemsKey] = num
 					}
 				}
-				if v := field.Tag.Get("uniqueItems"); v != "" {
-					fieldSchema["uniqueItems"] = (v == "true")
+				if v := field.Tag.Get(UniqueItemsKey); v != "" {
+					fieldSchema[UniqueItemsKey] = (v == "true")
 				}
 			}
 
 			// Enum support
-			if enumTag := field.Tag.Get("enum"); enumTag != "" {
+			if enumTag := field.Tag.Get(EnumKey); enumTag != "" {
 				parts := strings.Split(enumTag, ",")
 				for i := range parts {
 					parts[i] = strings.TrimSpace(parts[i])
 				}
-				fieldSchema["enum"] = parts
+				fieldSchema[EnumKey] = parts
 			}
 
-			// Add dataSource support
-			if dataSource := field.Tag.Get("dataSource"); dataSource != "" {
-				fieldSchema["dataSource"] = dataSource
+			// Additional attributes
+			if v := field.Tag.Get(DataSourceKey); v != "" {
+				fieldSchema[DataSourceKey] = v
 			}
-
-			// Add dataSource support
-			if component := field.Tag.Get("componentId"); component != "" {
-				fieldSchema["componentId"] = component
+			if v := field.Tag.Get(ComponentIDKey); v != "" {
+				fieldSchema[ComponentIDKey] = v
+			}
+			if v := field.Tag.Get(DependencyIDKey); v != "" {
+				fieldSchema[DependencyIDKey] = v
 			}
 
 			// Metadata
-			if v := field.Tag.Get("title"); v != "" {
-				fieldSchema["title"] = v
+			if v := field.Tag.Get(TitleKey); v != "" {
+				fieldSchema[TitleKey] = v
 			}
-			if v := field.Tag.Get("description"); v != "" {
-				fieldSchema["description"] = v
+			if v := field.Tag.Get(DescriptionKey); v != "" {
+				fieldSchema[DescriptionKey] = v
 			}
-			if v := field.Tag.Get("default"); v != "" {
-				fieldSchema["default"] = v
-			}
-
-			// Composition keywords
-			if v := field.Tag.Get("oneOf"); v != "" {
-				parts := strings.Split(v, ",")
-				var subschemas []interface{}
-				for _, part := range parts {
-					subschemas = append(subschemas, map[string]interface{}{"$ref": strings.TrimSpace(part)})
-				}
-				fieldSchema["oneOf"] = subschemas
-			}
-			if v := field.Tag.Get("anyOf"); v != "" {
-				parts := strings.Split(v, ",")
-				var subschemas []interface{}
-				for _, part := range parts {
-					subschemas = append(subschemas, map[string]interface{}{"$ref": strings.TrimSpace(part)})
-				}
-				fieldSchema["anyOf"] = subschemas
-			}
-			if v := field.Tag.Get("allOf"); v != "" {
-				parts := strings.Split(v, ",")
-				var subschemas []interface{}
-				for _, part := range parts {
-					subschemas = append(subschemas, map[string]interface{}{"$ref": strings.TrimSpace(part)})
-				}
-				fieldSchema["allOf"] = subschemas
-			}
-			if v := field.Tag.Get("not"); v != "" {
-				fieldSchema["not"] = map[string]interface{}{"$ref": strings.TrimSpace(v)}
+			if v := field.Tag.Get(DefaultKey); v != "" {
+				fieldSchema[DefaultKey] = v
 			}
 
 			// Required field
-			if req := field.Tag.Get("required"); req == "true" {
+			if req := field.Tag.Get(RequiredKey); req == "true" {
 				requiredFields = append(requiredFields, name)
 			}
 
 			// Additional properties override for objects.
-			if typ, ok := fieldSchema["type"].(string); ok && typ == "object" {
-				if ap := field.Tag.Get("additionalProperties"); ap != "" {
+			if typ, ok := fieldSchema[TypeKey].(string); ok && typ == TypeObject {
+				if ap := field.Tag.Get(AdditionalPropertiesKey); ap != "" {
 					if ap == "false" {
-						fieldSchema["additionalProperties"] = false
+						fieldSchema[AdditionalPropertiesKey] = false
 					} else {
-						fieldSchema["additionalProperties"] = map[string]interface{}{"$ref": ap}
+						fieldSchema[AdditionalPropertiesKey] = map[string]interface{}{RefKey: ap}
 					}
 				}
 			}
 
 			props[name] = fieldSchema
 		}
-		schema["properties"] = props
+		schema[PropertiesKey] = props
 		if len(requiredFields) > 0 {
-			schema["required"] = requiredFields
+			schema[RequiredKey] = requiredFields
 		}
 	case reflect.Slice, reflect.Array:
-		schema["type"] = "array"
-		schema["items"] = GenerateSchema(t.Elem())
+		schema[TypeKey] = TypeArray
+		schema[ItemsKey] = GenerateSchema(t.Elem())
 	case reflect.Map:
-		schema["type"] = "object"
-		// Map keys are assumed to be strings.
-		schema["additionalProperties"] = GenerateSchema(t.Elem())
+		schema[TypeKey] = TypeObject
+		schema[AdditionalPropertiesKey] = GenerateSchema(t.Elem())
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		schema["type"] = "integer"
+		schema[TypeKey] = TypeInteger
 	case reflect.Float32, reflect.Float64:
-		schema["type"] = "number"
+		schema[TypeKey] = TypeNumber
 	case reflect.Bool:
-		schema["type"] = "boolean"
+		schema[TypeKey] = TypeBoolean
 	case reflect.String:
-		schema["type"] = "string"
+		schema[TypeKey] = TypeString
 	default:
-		schema["type"] = "string"
+		schema[TypeKey] = TypeString
 	}
 	return schema
 }
 
+// GenerateSchemaRawMessage returns a JSON schema as a raw JSON message.
 func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
 	schema := GenerateSchema(t)
 	raw, err := json.Marshal(schema)
