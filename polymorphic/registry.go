@@ -31,9 +31,14 @@ func Register[T Polymorphic](factory func() T) {
 }
 
 // CreateInstance creates an instance based on the discriminator.
-func CreateInstance(discriminator string) (any, error) {
+func CreateInstance(discriminator string) (Polymorphic, error) {
 	if factory, ok := types.Load(discriminator); ok {
-		return factory.(TypeFactory)(), nil
+		instance := factory.(TypeFactory)()
+		typedInstance, ok := instance.(Polymorphic)
+		if !ok {
+			return nil, fmt.Errorf("invalid instance type for %q", discriminator)
+		}
+		return typedInstance, nil
 	}
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
 }
