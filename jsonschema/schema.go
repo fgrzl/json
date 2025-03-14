@@ -38,6 +38,7 @@ const (
 	DataSourceKey           = "dataSource"
 	ComponentIDKey          = "componentId"
 	DependencyIDKey         = "dependencyId"
+	PositionKey             = "position"
 
 	// JSON struct tag keys
 	JSONTag = "json"
@@ -152,6 +153,12 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 			}
 			if v := field.Tag.Get(DependencyIDKey); v != "" {
 				fieldSchema[DependencyIDKey] = v
+			}
+			if v := field.Tag.Get(PositionKey); v != "" {
+				num, err := strconv.Atoi(v)
+				if err == nil {
+					fieldSchema[PositionKey] = num
+				}
 			}
 
 			// Metadata
