@@ -20,6 +20,15 @@ func MarshalPolymorphicJSON(obj Polymorphic) ([]byte, error) {
 	return json.Marshal(wrapper)
 }
 
+func UnmarshalPolymorphicJSON(data []byte) (*Envelope, error) {
+	// Unmarshal into an Envelope and let UnmarshalJSON handle validation
+	var envelope Envelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal polymorphic JSON: %w", err)
+	}
+	return &envelope, nil
+}
+
 // Envelope holds type info and raw JSON data
 type Envelope struct {
 	Discriminator string `json:"$type"`
