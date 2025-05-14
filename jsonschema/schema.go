@@ -224,3 +224,8 @@ func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
 	}
 	return raw
 }
+
+func SchemaFrom[T any]() json.RawMessage {
+	var zero T
+	return GenerateSchemaRawMessage(reflect.TypeOf(zero))
+}
