@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fgrzl/json/polymorphic"
 )
@@ -53,16 +54,30 @@ const (
 	TypeString  = "string"
 )
 
+func jsonFieldName(f reflect.StructField) string {
+	tag := strings.Split(f.Tag.Get(JSONTag), ",")[0]
+	if tag == "" {
+		return f.Name
+	}
+	return tag
+}
+
 // GenerateSchema produces a JSON Schema as a map for a given Go type.
-func GenerateSchema(t reflect.Type) map[string]interface{} {
-	// Unwrap pointer types
+func GenerateSchema(t reflect.Type) map[string]any {
+	// Special-case time.Time and *time.Time
+	if (t.Kind() == reflect.Ptr && t.Elem() == reflect.TypeOf(time.Time{})) || t == reflect.TypeOf(time.Time{}) {
+		return map[string]any{
+			TypeKey:   TypeString,
+			FormatKey: "date-time",
+		}
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
-	schema := make(map[string]interface{})
+	schema := make(map[string]any)
 
-	// If type implements polymorphic.Polymorphic, set $id from GetDiscriminator
+	// Handle polymorphic discriminator
 	if t.Kind() == reflect.Struct {
 		instance := reflect.New(t).Interface()
 		if p, ok := instance.(polymorphic.Polymorphic); ok {
@@ -73,21 +88,22 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 	switch t.Kind() {
 	case reflect.Struct:
 		schema[TypeKey] = TypeObject
-		props := make(map[string]interface{})
+		props := make(map[string]any)
 		var requiredFields []string
 
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
-
-			// Get JSON property name
-			name := strings.Split(field.Tag.Get(JSONTag), ",")[0]
-			if name == "" {
-				name = field.Name
+			if field.PkgPath != "" {
+				continue // skip unexported fields
 			}
 
-			// If a $ref is provided
+			name := jsonFieldName(field)
+			if name == "-" {
+				continue
+			}
+
 			if refTag := field.Tag.Get(RefKey); refTag != "" {
-				props[name] = map[string]interface{}{RefKey: refTag}
+				props[name] = map[string]any{RefKey: refTag}
 				continue
 			}
 
@@ -149,7 +165,7 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 				}
 			}
 
-			// Enum support
+			// Enum
 			if enumTag := field.Tag.Get(EnumKey); enumTag != "" {
 				parts := strings.Split(enumTag, ",")
 				for i := range parts {
@@ -190,13 +206,13 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 				requiredFields = append(requiredFields, name)
 			}
 
-			// Nested object: restrict additionalProperties if requested
+			// Nested object: control additionalProperties
 			if typ, ok := fieldSchema[TypeKey].(string); ok && typ == TypeObject {
 				if ap := field.Tag.Get(AdditionalPropertiesKey); ap != "" {
 					if ap == "false" {
 						fieldSchema[AdditionalPropertiesKey] = false
 					} else {
-						fieldSchema[AdditionalPropertiesKey] = map[string]interface{}{RefKey: ap}
+						fieldSchema[AdditionalPropertiesKey] = map[string]any{RefKey: ap}
 					}
 				}
 			}
@@ -208,20 +224,27 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 		if len(requiredFields) > 0 {
 			schema[RequiredKey] = requiredFields
 		}
+
 	case reflect.Slice, reflect.Array:
 		schema[TypeKey] = TypeArray
 		schema[ItemsKey] = GenerateSchema(t.Elem())
+
 	case reflect.Map:
 		schema[TypeKey] = TypeObject
 		schema[AdditionalPropertiesKey] = GenerateSchema(t.Elem())
+
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		schema[TypeKey] = TypeInteger
+
 	case reflect.Float32, reflect.Float64:
 		schema[TypeKey] = TypeNumber
+
 	case reflect.Bool:
 		schema[TypeKey] = TypeBoolean
+
 	case reflect.String:
 		schema[TypeKey] = TypeString
+
 	default:
 		schema[TypeKey] = TypeString
 	}
@@ -229,7 +252,6 @@ func GenerateSchema(t reflect.Type) map[string]interface{} {
 	return schema
 }
 
-// GenerateSchemaRawMessage returns a JSON schema as json.RawMessage.
 func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
 	schema := GenerateSchema(t)
 	raw, err := json.Marshal(schema)
@@ -240,7 +262,6 @@ func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
 	return raw
 }
 
-// SchemaFrom generates a JSON Schema for generic type T.
 func SchemaFrom[T any]() json.RawMessage {
 	var zero T
 	return GenerateSchemaRawMessage(reflect.TypeOf(zero))
