@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -63,10 +64,50 @@ var registeredSchemas = map[reflect.Type]map[string]any{
 	reflect.TypeOf([]byte{}):               {TypeKey: TypeString, FormatKey: "byte"},
 	reflect.TypeOf((*url.URL)(nil)).Elem(): {TypeKey: TypeString, FormatKey: "uri"},
 	reflect.TypeOf(net.IP{}):               {TypeKey: TypeString, FormatKey: "ipv4"},
+
+	// Nullable SQL types
+	reflect.TypeOf(sql.NullString{}):  {TypeKey: []any{TypeString, "null"}},
+	reflect.TypeOf(sql.NullInt64{}):   {TypeKey: []any{TypeInteger, "null"}},
+	reflect.TypeOf(sql.NullBool{}):    {TypeKey: []any{TypeBoolean, "null"}},
+	reflect.TypeOf(sql.NullFloat64{}): {TypeKey: []any{TypeNumber, "null"}},
+	reflect.TypeOf(sql.NullTime{}): {
+		TypeKey:   []any{TypeString, "null"},
+		FormatKey: "date-time",
+	},
+}
+
+// Internal registry of component schemas
+var components = map[string]any{}
+
+func RegisterComponent(name string, schema map[string]any) {
+	components[name] = schema
+}
+
+func GetComponents() map[string]any {
+	return components
+}
+
+func GenerateSchema(t reflect.Type) map[string]any {
+	return generateSchemaInternal(t, true)
+}
+
+func GenerateSchemaWithComponents(t reflect.Type) map[string]any {
+	components = make(map[string]any)
+
+	root := generateSchemaInternal(t, false)
+
+	rootName := t
+	if rootName.Kind() == reflect.Ptr {
+		rootName = rootName.Elem()
+	}
+	refName := rootName.Name()
+
+	RegisterComponent(refName, root)
+	return GetComponents()
 }
 
 // GenerateSchema creates a JSON Schema for a given Go type.
-func GenerateSchema(t reflect.Type) map[string]any {
+func generateSchemaInternal(t reflect.Type, inline bool) map[string]any {
 	// Dereference pointers
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -80,16 +121,16 @@ func GenerateSchema(t reflect.Type) map[string]any {
 	// Generate schema based on type kind
 	switch t.Kind() {
 	case reflect.Struct:
-		return generateStructSchema(t)
+		return generateStructSchema(t, inline)
 	case reflect.Slice, reflect.Array:
 		return map[string]any{
 			TypeKey:  TypeArray,
-			ItemsKey: GenerateSchema(t.Elem()),
+			ItemsKey: generateSchemaInternal(t.Elem(), inline),
 		}
 	case reflect.Map:
 		return map[string]any{
 			TypeKey:                 TypeObject,
-			AdditionalPropertiesKey: GenerateSchema(t.Elem()),
+			AdditionalPropertiesKey: generateSchemaInternal(t.Elem(), inline),
 		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return map[string]any{TypeKey: TypeInteger}
@@ -105,37 +146,68 @@ func GenerateSchema(t reflect.Type) map[string]any {
 }
 
 // generateStructSchema generates a JSON Schema for a Go struct type.
-func generateStructSchema(t reflect.Type) map[string]any {
+func generateStructSchema(t reflect.Type, inline bool) map[string]any {
 	schema := map[string]any{TypeKey: TypeObject}
 	properties := map[string]any{}
 	var required []string
 
-	// Handle polymorphic types
 	if p, ok := reflect.New(t).Interface().(polymorphic.Polymorphic); ok {
 		schema["$id"] = p.GetDiscriminator()
 	}
 
-	// Process struct fields
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if field.PkgPath != "" || jsonFieldName(field) == "-" {
-			continue // Skip unexported or ignored fields
+			continue
 		}
 
 		name := jsonFieldName(field)
+
 		if ref := field.Tag.Get(RefKey); ref != "" {
 			properties[name] = map[string]any{RefKey: ref}
 			continue
 		}
 
-		// Generate and enhance field schema
-		fieldSchema := GenerateSchema(field.Type)
+		ft := field.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+
+		useRef := !inline &&
+			ft.Kind() == reflect.Struct &&
+			ft.Name() != "" &&
+			ft.PkgPath() != "time" &&
+			ft != reflect.TypeOf(uuid.UUID{})
+
+		if useRef {
+			if _, ok := knownSchema(ft); !ok {
+				refName := ft.Name()
+				if _, exists := components[refName]; !exists {
+					refSchema := generateStructSchema(ft, inline)
+
+					if ap := field.Tag.Get(AdditionalPropertiesKey); ap != "" {
+						if ap == "false" {
+							refSchema[AdditionalPropertiesKey] = false
+						} else {
+							refSchema[AdditionalPropertiesKey] = map[string]any{RefKey: ap}
+						}
+					}
+
+					RegisterComponent(refName, refSchema)
+				}
+			}
+
+			properties[name] = map[string]any{RefKey: "#/components/schemas/" + ft.Name()}
+			continue
+		}
+
+		fieldSchema := generateSchemaInternal(field.Type, inline)
 		applyFieldTags(field, fieldSchema)
 
-		// Mark required fields
 		if field.Tag.Get(RequiredKey) == "true" || field.Tag.Get("binding") == "required" {
 			required = append(required, name)
 		}
+
 		properties[name] = fieldSchema
 	}
 
