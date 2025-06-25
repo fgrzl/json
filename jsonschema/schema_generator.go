@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fgrzl/json/polymorphic"
 	"github.com/google/uuid"
 )
 
@@ -76,146 +75,14 @@ var registeredSchemas = map[reflect.Type]map[string]any{
 	},
 }
 
-// Internal registry of component schemas
-var components = map[string]any{}
-
-func RegisterComponent(name string, schema map[string]any) {
-	components[name] = schema
-}
-
-func GetComponents() map[string]any {
-	return components
-}
-
 func GenerateSchema(t reflect.Type) map[string]any {
-	return generateSchemaInternal(t, true)
+	builder := NewBuilder()
+	return builder.Schema(t)
 }
 
-func GenerateSchemaWithComponents(t reflect.Type) map[string]any {
-	components = make(map[string]any)
-
-	root := generateSchemaInternal(t, false)
-
-	rootName := t
-	if rootName.Kind() == reflect.Ptr {
-		rootName = rootName.Elem()
-	}
-	refName := rootName.Name()
-
-	RegisterComponent(refName, root)
-	return GetComponents()
-}
-
-// GenerateSchema creates a JSON Schema for a given Go type.
-func generateSchemaInternal(t reflect.Type, inline bool) map[string]any {
-	// Dereference pointers
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	// Check for registered schemas
-	if schema, ok := knownSchema(t); ok {
-		return schema
-	}
-
-	// Generate schema based on type kind
-	switch t.Kind() {
-	case reflect.Struct:
-		return generateStructSchema(t, inline)
-	case reflect.Slice, reflect.Array:
-		return map[string]any{
-			TypeKey:  TypeArray,
-			ItemsKey: generateSchemaInternal(t.Elem(), inline),
-		}
-	case reflect.Map:
-		return map[string]any{
-			TypeKey:                 TypeObject,
-			AdditionalPropertiesKey: generateSchemaInternal(t.Elem(), inline),
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return map[string]any{TypeKey: TypeInteger}
-	case reflect.Float32, reflect.Float64:
-		return map[string]any{TypeKey: TypeNumber}
-	case reflect.Bool:
-		return map[string]any{TypeKey: TypeBoolean}
-	case reflect.String:
-		return map[string]any{TypeKey: TypeString}
-	default:
-		return map[string]any{TypeKey: TypeString}
-	}
-}
-
-// generateStructSchema generates a JSON Schema for a Go struct type.
-func generateStructSchema(t reflect.Type, inline bool) map[string]any {
-	schema := map[string]any{TypeKey: TypeObject}
-	properties := map[string]any{}
-	var required []string
-
-	if p, ok := reflect.New(t).Interface().(polymorphic.Polymorphic); ok {
-		schema["$id"] = p.GetDiscriminator()
-	}
-
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if field.PkgPath != "" || jsonFieldName(field) == "-" {
-			continue
-		}
-
-		name := jsonFieldName(field)
-
-		if ref := field.Tag.Get(RefKey); ref != "" {
-			properties[name] = map[string]any{RefKey: ref}
-			continue
-		}
-
-		ft := field.Type
-		if ft.Kind() == reflect.Ptr {
-			ft = ft.Elem()
-		}
-
-		useRef := !inline &&
-			ft.Kind() == reflect.Struct &&
-			ft.Name() != "" &&
-			ft.PkgPath() != "time" &&
-			ft != reflect.TypeOf(uuid.UUID{})
-
-		if useRef {
-			if _, ok := knownSchema(ft); !ok {
-				refName := ft.Name()
-				if _, exists := components[refName]; !exists {
-					refSchema := generateStructSchema(ft, inline)
-
-					if ap := field.Tag.Get(AdditionalPropertiesKey); ap != "" {
-						if ap == "false" {
-							refSchema[AdditionalPropertiesKey] = false
-						} else {
-							refSchema[AdditionalPropertiesKey] = map[string]any{RefKey: ap}
-						}
-					}
-
-					RegisterComponent(refName, refSchema)
-				}
-			}
-
-			properties[name] = map[string]any{RefKey: "#/components/schemas/" + ft.Name()}
-			continue
-		}
-
-		fieldSchema := generateSchemaInternal(field.Type, inline)
-		applyFieldTags(field, fieldSchema)
-
-		if field.Tag.Get(RequiredKey) == "true" || field.Tag.Get("binding") == "required" {
-			required = append(required, name)
-		}
-
-		properties[name] = fieldSchema
-	}
-
-	schema[PropertiesKey] = properties
-	if len(required) > 0 {
-		schema[RequiredKey] = required
-	}
-	return schema
+func GenerateSchemaWithComponents(t reflect.Type) (map[string]any, map[string]any) {
+	builder := NewBuilder()
+	return builder.SchemaWithComponents(t)
 }
 
 // applyFieldTags applies struct tags to a field's JSON Schema.
@@ -342,15 +209,6 @@ func jsonFieldName(f reflect.StructField) string {
 		return f.Name
 	}
 	return tag
-}
-
-// knownSchema retrieves a registered schema for a given type.
-func knownSchema(t reflect.Type) (map[string]any, bool) {
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	schema, ok := registeredSchemas[t]
-	return schema, ok
 }
 
 // RegisterSchema registers a custom JSON Schema for a Go type.

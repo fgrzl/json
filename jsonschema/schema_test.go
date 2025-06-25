@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,11 +16,12 @@ func assertSchema(t *testing.T, input any, expected map[string]any) {
 	assert.Equal(t, expected, got)
 }
 
-func assertSchemas(t *testing.T, input any, expected map[string]any) {
+func assertSchemas(t *testing.T, input any, expected map[string]any, expectedComponents map[string]any) {
 	t.Helper()
 	typ := reflect.TypeOf(input)
-	got := GenerateSchemaWithComponents(typ)
+	got, gotComponents := GenerateSchemaWithComponents(typ)
 	assert.Equal(t, expected, got)
+	assert.Equal(t, expectedComponents, gotComponents)
 }
 
 func TestGenerateSchema_Required(t *testing.T) {
@@ -98,12 +100,17 @@ func TestGenerateSchema_AdditionalProperties(t *testing.T) {
 		Field string `json:"field"`
 	}
 	type TestStruct struct {
-		Data Nested `json:"data" additionalProperties:"false"`
+		ID   uuid.UUID `json:"id"`
+		Data Nested    `json:"data" additionalProperties:"false"`
 	}
 
 	expected := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"id": map[string]any{
+				"type":   TypeString,
+				"format": "uuid",
+			},
 			"data": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -124,18 +131,23 @@ func TestGenerateSchemaWithComponents_AdditionalProperties(t *testing.T) {
 		Field string `json:"field"`
 	}
 	type TestStruct struct {
-		Data Nested `json:"data" additionalProperties:"false"`
+		ID   uuid.UUID `json:"id"`
+		Data Nested    `json:"data" additionalProperties:"false"`
 	}
 
 	expected := map[string]any{
-		"TestStruct": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"data": map[string]any{
-					"$ref": "#/components/schemas/Nested",
-				},
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{
+				"type":   TypeString,
+				"format": "uuid",
 			},
-		},
+			"data": map[string]any{
+				"$ref": "#/components/schemas/Nested",
+			},
+		}}
+
+	expectedComponents := map[string]any{
 		"Nested": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -144,10 +156,9 @@ func TestGenerateSchemaWithComponents_AdditionalProperties(t *testing.T) {
 				},
 			},
 			"additionalProperties": false,
-		},
-	}
+		}}
 
-	assertSchemas(t, TestStruct{}, expected)
+	assertSchemas(t, TestStruct{}, expected, expectedComponents)
 }
 
 func TestGenerateSchema_RawMessage(t *testing.T) {
