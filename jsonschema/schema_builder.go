@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"log/slog"
 	"reflect"
 
 	"github.com/fgrzl/json/polymorphic"
@@ -19,16 +20,21 @@ func (b *Builder) Components() map[string]any {
 }
 
 func (b *Builder) Schema(t reflect.Type) map[string]any {
-	return b.schemaInternal(t, true)
+	return b.schemaInternal(t, false)
 }
 
 func (b *Builder) SchemaWithComponents(t reflect.Type) (map[string]any, map[string]any) {
 	b.components = make(map[string]any)
-	root := b.schemaInternal(t, false)
+	root := b.schemaInternal(t, true)
 	return root, b.components
 }
 
-func (b *Builder) schemaInternal(t reflect.Type, inline bool) map[string]any {
+func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
+
+	name := t.Name()
+	if name != "" {
+		slog.Info("generate schema", "type", name)
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -39,16 +45,16 @@ func (b *Builder) schemaInternal(t reflect.Type, inline bool) map[string]any {
 
 	switch t.Kind() {
 	case reflect.Struct:
-		return b.structSchema(t, inline)
+		return b.structSchema(t, asRef)
 	case reflect.Slice, reflect.Array:
 		return map[string]any{
 			TypeKey:  TypeArray,
-			ItemsKey: b.schemaInternal(t.Elem(), inline),
+			ItemsKey: b.schemaInternal(t.Elem(), asRef),
 		}
 	case reflect.Map:
 		return map[string]any{
 			TypeKey:                 TypeObject,
-			AdditionalPropertiesKey: b.schemaInternal(t.Elem(), inline),
+			AdditionalPropertiesKey: b.schemaInternal(t.Elem(), asRef),
 		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return map[string]any{TypeKey: TypeInteger}
@@ -63,7 +69,7 @@ func (b *Builder) schemaInternal(t reflect.Type, inline bool) map[string]any {
 	}
 }
 
-func (b *Builder) structSchema(t reflect.Type, inline bool) map[string]any {
+func (b *Builder) structSchema(t reflect.Type, useRef bool) map[string]any {
 	schema := map[string]any{TypeKey: TypeObject}
 	properties := map[string]any{}
 	var required []string
@@ -86,31 +92,45 @@ func (b *Builder) structSchema(t reflect.Type, inline bool) map[string]any {
 		}
 
 		ft := field.Type
-		if ft.Kind() == reflect.Ptr {
-			ft = ft.Elem()
+		ftKind := ft.Kind()
+
+		// Unwrap to get base type
+		baseType := ft
+		baseKind := baseType.Kind()
+		for baseKind == reflect.Ptr || baseKind == reflect.Slice || baseKind == reflect.Array || baseKind == reflect.Map {
+			baseType = baseType.Elem()
+			baseKind = baseType.Kind()
 		}
 
-		if !inline && isEligibleForRef(ft) {
-			refName := ft.Name()
+		refName := baseType.Name()
+
+		// Generate component if eligible
+		if useRef && refName != "" && isEligibleForRef(baseType) {
 			if _, exists := b.components[refName]; !exists {
-				refSchema := b.structSchema(ft, inline)
-
-				if ap := field.Tag.Get(AdditionalPropertiesKey); ap != "" {
-					if ap == "false" {
-						refSchema[AdditionalPropertiesKey] = false
-					} else {
-						refSchema[AdditionalPropertiesKey] = map[string]any{RefKey: ap}
-					}
-				}
-
+				refSchema := b.schemaInternal(baseType, useRef)
 				b.components[refName] = refSchema
-
 			}
-			properties[name] = map[string]any{RefKey: "#/components/schemas/" + ft.Name()}
+
+			ref := map[string]any{RefKey: "#/components/schemas/" + refName}
+
+			switch ftKind {
+			case reflect.Slice, reflect.Array:
+				properties[name] = map[string]any{
+					TypeKey:  TypeArray,
+					ItemsKey: ref,
+				}
+			case reflect.Map:
+				properties[name] = map[string]any{
+					TypeKey:                 TypeObject,
+					AdditionalPropertiesKey: ref,
+				}
+			default:
+				properties[name] = ref
+			}
 			continue
 		}
 
-		fieldSchema := b.schemaInternal(field.Type, inline)
+		fieldSchema := b.schemaInternal(field.Type, useRef)
 		applyFieldTags(field, fieldSchema)
 
 		if field.Tag.Get(RequiredKey) == "true" || field.Tag.Get("binding") == "required" {
@@ -124,6 +144,7 @@ func (b *Builder) structSchema(t reflect.Type, inline bool) map[string]any {
 	if len(required) > 0 {
 		schema[RequiredKey] = required
 	}
+
 	return schema
 }
 
@@ -131,18 +152,16 @@ func isEligibleForRef(t reflect.Type) bool {
 	if t == nil {
 		return false
 	}
-	if t.Kind() == reflect.Ptr {
+
+	// unwrap slices, arrays, and pointers
+	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
 		t = t.Elem()
 	}
+
 	if t.Kind() != reflect.Struct {
 		return false
 	}
-	if t.Name() == "" || t.PkgPath() == "" {
-		return false
-	}
-	// Check both value and pointer forms
-	if _, known := registeredSchemas[t]; known {
-		return false
-	}
-	return true
+
+	_, known := registeredSchemas[t]
+	return !known
 }

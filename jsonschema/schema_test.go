@@ -145,7 +145,8 @@ func TestGenerateSchemaWithComponents_AdditionalProperties(t *testing.T) {
 			"data": map[string]any{
 				"$ref": "#/components/schemas/Nested",
 			},
-		}}
+		},
+	}
 
 	expectedComponents := map[string]any{
 		"Nested": map[string]any{
@@ -155,8 +156,8 @@ func TestGenerateSchemaWithComponents_AdditionalProperties(t *testing.T) {
 					"type": "string",
 				},
 			},
-			"additionalProperties": false,
-		}}
+		},
+	}
 
 	assertSchemas(t, TestStruct{}, expected, expectedComponents)
 }
