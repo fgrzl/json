@@ -11,7 +11,7 @@ This package provides functionality to generate JSON schemas from Go types.
 
 ### GenerateSchema
 
-The `GenerateSchema` function takes a `reflect.Type` and generates a JSON schema as a `map[string]interface{}`. It supports the following Go types:
+The `GenerateSchema` function takes a `reflect.Type` and generates a JSON schema as a `map[string]any`. It supports the following Go types:
 
 - `struct`: Generates an "object" type schema with properties.
 - `slice` and `array`: Generates an "array" type schema with items.
@@ -23,7 +23,7 @@ The `GenerateSchema` function takes a `reflect.Type` and generates a JSON schema
 - Other types default to a "string" type schema.
 
 ```go
-func GenerateSchema(t reflect.Type) map[string]interface{}
+func GenerateSchema(t reflect.Type) map[string]any
 ```
 
 Example usage:
@@ -42,7 +42,7 @@ type Example struct {
     Age         int    `json:"age" minimum:"0" maximum:"150"`
     Email       string `json:"email" format:"email"`
     Tags        []string `json:"tags" minItems:"1" uniqueItems:"true"`
-    Preferences map[string]interface{} `json:"preferences" additionalProperties:"true"`
+    Preferences map[string]any `json:"preferences" additionalProperties:"true"`
     Password    string `json:"password" required:"true" pattern:"^[a-zA-Z0-9]{8,}$"`
 }
 
@@ -141,8 +141,8 @@ To generate a patch:
 ```go
 import "github.com/fgrzl/json/jsonpatch"
 
-before := map[string]interface{}{"foo": "bar"}
-after := map[string]interface{}{"foo": "baz"}
+before := map[string]any{"foo": "bar"}
+after := map[string]any{"foo": "baz"}
 
 patches, err := jsonpatch.GeneratePatch(before, after, "")
 if err != nil {
@@ -155,7 +155,7 @@ To apply a patch:
 ```go
 import "github.com/fgrzl/json/jsonpatch"
 
-original := map[string]interface{}{"foo": "bar"}
+original := map[string]any{"foo": "bar"}
 patches := []jsonpatch.Patch{
     {Op: "replace", Path: "/foo", Value: "baz"},
 }

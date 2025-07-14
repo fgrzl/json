@@ -1,6 +1,7 @@
 package jsonpatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -10,13 +11,13 @@ import (
 
 // Patch represents a single JSON Patch operation.
 type Patch struct {
-	Op    string      `json:"op"`
-	Path  string      `json:"path"`
-	From  string      `json:"from,omitempty"`
-	Value interface{} `json:"value,omitempty"`
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	From  string `json:"from,omitempty"`
+	Value any    `json:"value,omitempty"`
 }
 
-func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) {
+func GeneratePatch(before, after any, basePath string) ([]Patch, error) {
 	patches := []Patch{}
 	beforeMap, err := toMap(before)
 	if err != nil {
@@ -74,7 +75,7 @@ func GeneratePatch(before, after interface{}, basePath string) ([]Patch, error) 
 }
 
 // ApplyPatch applies a series of JSON Patch operations to the original JSON object.
-func ApplyPatch(original interface{}, patches []Patch) (interface{}, error) {
+func ApplyPatch(original any, patches []Patch) (map[string]any, error) {
 	target, err := toMap(original)
 	if err != nil {
 		return nil, err
@@ -111,25 +112,56 @@ func ApplyPatch(original interface{}, patches []Patch) (interface{}, error) {
 	return target, nil
 }
 
-// toMap converts a struct (or already a map) to a map[string]interface{} using reflection,
+func ApplyPatchAndHydrate(original, updated any, patches []Patch) error {
+	// Convert original to map
+	patched, err := ApplyPatch(original, patches)
+	if err != nil {
+		return fmt.Errorf("apply patch: %w", err)
+	}
+
+	// Marshal patched map and unmarshal into `out`
+	bytes, err := json.Marshal(patched)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := json.Unmarshal(bytes, updated); err != nil {
+		return fmt.Errorf("unmarshal to %T: %w", updated, err)
+	}
+	return nil
+}
+
+// toMap converts a struct (or already a map) to a map[string]any using reflection,
 // thus avoiding expensive JSON round-trips.
-func toMap(data interface{}) (map[string]interface{}, error) {
-	if m, ok := data.(map[string]interface{}); ok {
+func toMap(data any) (map[string]any, error) {
+	// If already a map
+	if m, ok := data.(map[string]any); ok {
 		return m, nil
 	}
+	// If a pointer to a map
+	if m, ok := data.(*map[string]any); ok {
+		return *m, nil
+	}
+
 	v := reflect.ValueOf(data)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	// Only structs are supported.
+	// Only structs are supported
 	if v.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("unsupported type %T for conversion to map", data)
 	}
-	result := make(map[string]interface{})
+
+	result := make(map[string]any)
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
-		// Use the json tag if available.
+
+		// 3. Skip unexported fields
+		if field.PkgPath != "" {
+			continue
+		}
+
+		// Use JSON tag if available
 		key := field.Name
 		if tag := field.Tag.Get("json"); tag != "" {
 			parts := strings.Split(tag, ",")
@@ -137,21 +169,22 @@ func toMap(data interface{}) (map[string]interface{}, error) {
 				key = parts[0]
 			}
 		}
+
 		result[key] = v.Field(i).Interface()
 	}
 	return result, nil
 }
 
-// toSlice converts an array/slice to []interface{} using reflection.
-func toSlice(data interface{}) ([]interface{}, error) {
-	if s, ok := data.([]interface{}); ok {
+// toSlice converts an array/slice to []any using reflection.
+func toSlice(data any) ([]any, error) {
+	if s, ok := data.([]any); ok {
 		return s, nil
 	}
 	v := reflect.ValueOf(data)
 	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
 		return nil, fmt.Errorf("unsupported type %T for conversion to slice", data)
 	}
-	result := make([]interface{}, v.Len())
+	result := make([]any, v.Len())
 	for i := 0; i < v.Len(); i++ {
 		result[i] = v.Index(i).Interface()
 	}
@@ -160,7 +193,7 @@ func toSlice(data interface{}) ([]interface{}, error) {
 
 // deepEqualFiltered compares two values.
 // For strings, it compares trimmed values to ignore incidental whitespace differences.
-func deepEqualFiltered(a, b interface{}) bool {
+func deepEqualFiltered(a, b any) bool {
 	aStr, aOk := a.(string)
 	bStr, bOk := b.(string)
 	if aOk && bOk {
@@ -172,7 +205,7 @@ func deepEqualFiltered(a, b interface{}) bool {
 // generateArrayPatch produces patch operations to transform one array into another.
 // It first checks for a simple swap, then uses an improved diff based on the Longest Common
 // Subsequence (LCS) to generate minimal operations.
-func generateArrayPatch(basePath string, before, after interface{}) ([]Patch, error) {
+func generateArrayPatch(basePath string, before, after any) ([]Patch, error) {
 	beforeSlice, err := toSlice(before)
 	if err != nil {
 		return nil, err
@@ -201,35 +234,10 @@ func generateArrayPatch(basePath string, before, after interface{}) ([]Patch, er
 	}
 
 	// Use the improved LCS-based diff algorithm.
-	return improvedArrayDiff(basePath, beforeSlice, afterSlice)
+	return arrayDiff(basePath, beforeSlice, afterSlice)
 }
 
-// improvedArrayDiff computes the minimal set of "remove" and "add" operations to transform
-// beforeSlice into afterSlice using LCS. When the arrays have equal lengths, any matching
-// removal and addition at the same index are merged into a single "replace" operation.
-// improvedArrayDiff generates a list of JSON Patch operations to transform
-// beforeSlice into afterSlice. It uses the Longest Common Subsequence (LCS)
-// algorithm to find the minimal set of changes.
-//
-// Parameters:
-// - basePath: The base path for the JSON Patch operations.
-// - beforeSlice: The original slice of interface{} elements.
-// - afterSlice: The target slice of interface{} elements.
-//
-// Returns:
-//   - A slice of Patch objects representing the necessary changes to transform
-//     beforeSlice into afterSlice.
-//   - An error if any issues occur during the process.
-//
-// The function performs the following steps:
-//  1. Builds a DP table for the LCS of beforeSlice and afterSlice.
-//  2. Determines which indices are part of the LCS.
-//  3. Generates removal patches for elements in beforeSlice that are not in the LCS.
-//  4. Generates addition patches for elements in afterSlice that are not in the LCS.
-//  5. Combines removal and addition patches.
-//  6. If beforeSlice and afterSlice are of equal length, merges matching remove+add
-//     pairs into a "replace" operation.
-func improvedArrayDiff(basePath string, beforeSlice, afterSlice []interface{}) ([]Patch, error) {
+func arrayDiff(basePath string, beforeSlice, afterSlice []any) ([]Patch, error) {
 	m, n := len(beforeSlice), len(afterSlice)
 	// Build DP table for LCS.
 	dp := make([][]int, m+1)
@@ -302,9 +310,10 @@ func improvedArrayDiff(basePath string, beforeSlice, afterSlice []interface{}) (
 			if err != nil {
 				continue
 			}
-			if p.Op == "remove" {
+			switch p.Op {
+			case "remove":
 				removalsMap[idx] = p
-			} else if p.Op == "add" {
+			case "add":
 				additionsMap[idx] = p
 			}
 		}
@@ -361,12 +370,12 @@ func parsePath(path string) ([]string, error) {
 
 // isTwoPartArray checks if the path has exactly two parts and that the first part
 // refers to an array in the target object.
-func isTwoPartArray(target map[string]interface{}, parts []string) (string, int, error) {
+func isTwoPartArray(target map[string]any, parts []string) (string, int, error) {
 	if len(parts) != 2 {
 		return "", -1, fmt.Errorf("expected 2 parts, got %d", len(parts))
 	}
 	key := parts[0]
-	arr, ok := target[key].([]interface{})
+	arr, ok := target[key].([]any)
 	if !ok {
 		return "", -1, fmt.Errorf("target[%s] is not an array", key)
 	}
@@ -378,7 +387,7 @@ func isTwoPartArray(target map[string]interface{}, parts []string) (string, int,
 }
 
 // traverseToParent walks the target object to the parent of the final key in the path.
-func traverseToParent(target map[string]interface{}, parts []string) (map[string]interface{}, string, bool, int, error) {
+func traverseToParent(target map[string]any, parts []string) (map[string]any, string, bool, int, error) {
 	parent := target
 	// Iterate through all but the last segment.
 	for i := 0; i < len(parts)-1; i++ {
@@ -390,7 +399,7 @@ func traverseToParent(target map[string]interface{}, parts []string) (map[string
 		// If we're at the second-to-last segment and the value is an array,
 		// then treat the next segment as an index.
 		if i == len(parts)-2 {
-			if arr, ok := val.([]interface{}); ok {
+			if arr, ok := val.([]any); ok {
 				j, err := strconv.Atoi(parts[i+1])
 				if err != nil || j < 0 || j >= len(arr) {
 					return nil, "", false, -1, fmt.Errorf("invalid index %s", parts[i+1])
@@ -398,13 +407,13 @@ func traverseToParent(target map[string]interface{}, parts []string) (map[string
 				return parent, part, true, j, nil
 			}
 			// Otherwise, assume it's a map.
-			if m, ok := val.(map[string]interface{}); ok {
+			if m, ok := val.(map[string]any); ok {
 				parent = m
 				return parent, parts[len(parts)-1], false, -1, nil
 			}
 			return nil, "", false, -1, fmt.Errorf("unexpected type at %s", part)
 		} else {
-			if m, ok := val.(map[string]interface{}); ok {
+			if m, ok := val.(map[string]any); ok {
 				parent = m
 			} else {
 				return nil, "", false, -1, fmt.Errorf("expected map at %s", part)
@@ -415,10 +424,10 @@ func traverseToParent(target map[string]interface{}, parts []string) (map[string
 }
 
 // applyAdd applies an "add" operation at the given path with the specified value.
-func applyAdd(target map[string]interface{}, parts []string, value interface{}) error {
+func applyAdd(target map[string]any, parts []string, value any) error {
 	// Special handling for a two-part path that targets an array's end.
 	if len(parts) == 2 {
-		if arr, ok := target[parts[0]].([]interface{}); ok {
+		if arr, ok := target[parts[0]].([]any); ok {
 			idx, err := strconv.Atoi(parts[1])
 			if err == nil && idx == len(arr) {
 				target[parts[0]] = append(arr, value)
@@ -428,11 +437,11 @@ func applyAdd(target map[string]interface{}, parts []string, value interface{}) 
 	}
 	// Try direct two-part array handling.
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr := target[key].([]interface{})
+		arr := target[key].([]any)
 		if idx == len(arr) {
 			target[key] = append(arr, value)
 		} else {
-			target[key] = append(arr[:idx], append([]interface{}{value}, arr[idx:]...)...)
+			target[key] = append(arr[:idx], append([]any{value}, arr[idx:]...)...)
 		}
 		return nil
 	}
@@ -449,10 +458,10 @@ func applyAdd(target map[string]interface{}, parts []string, value interface{}) 
 }
 
 // insertIntoSlice inserts a value into a slice at the specified index.
-func insertIntoSlice(parent map[string]interface{}, key string, index int, value interface{}) error {
-	arr, ok := parent[key].([]interface{})
+func insertIntoSlice(parent map[string]any, key string, index int, value any) error {
+	arr, ok := parent[key].([]any)
 	if !ok {
-		parent[key] = []interface{}{value}
+		parent[key] = []any{value}
 		return nil
 	}
 	if index < 0 || index > len(arr) {
@@ -461,15 +470,15 @@ func insertIntoSlice(parent map[string]interface{}, key string, index int, value
 	if index == len(arr) {
 		parent[key] = append(arr, value)
 	} else {
-		parent[key] = append(arr[:index], append([]interface{}{value}, arr[index:]...)...)
+		parent[key] = append(arr[:index], append([]any{value}, arr[index:]...)...)
 	}
 	return nil
 }
 
 // applyRemove applies a "remove" operation at the given path.
-func applyRemove(target map[string]interface{}, parts []string) error {
+func applyRemove(target map[string]any, parts []string) error {
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr := target[key].([]interface{})
+		arr := target[key].([]any)
 		if idx < 0 || idx >= len(arr) {
 			return fmt.Errorf("index %d out of bounds", idx)
 		}
@@ -488,8 +497,8 @@ func applyRemove(target map[string]interface{}, parts []string) error {
 }
 
 // removeFromSlice removes an element from a slice at the given index.
-func removeFromSlice(parent map[string]interface{}, key string, index int) error {
-	arr, ok := parent[key].([]interface{})
+func removeFromSlice(parent map[string]any, key string, index int) error {
+	arr, ok := parent[key].([]any)
 	if !ok || index < 0 || index >= len(arr) {
 		return fmt.Errorf("invalid array or index %d", index)
 	}
@@ -498,9 +507,9 @@ func removeFromSlice(parent map[string]interface{}, key string, index int) error
 }
 
 // applyReplace applies a "replace" operation at the given path.
-func applyReplace(target map[string]interface{}, parts []string, value interface{}) error {
+func applyReplace(target map[string]any, parts []string, value any) error {
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr := target[key].([]interface{})
+		arr := target[key].([]any)
 		if idx < 0 || idx >= len(arr) {
 			return fmt.Errorf("index %d out of bounds", idx)
 		}
@@ -520,8 +529,8 @@ func applyReplace(target map[string]interface{}, parts []string, value interface
 }
 
 // replaceInSlice replaces an element in a slice at the specified index.
-func replaceInSlice(parent map[string]interface{}, key string, index int, value interface{}) error {
-	arr, ok := parent[key].([]interface{})
+func replaceInSlice(parent map[string]any, key string, index int, value any) error {
+	arr, ok := parent[key].([]any)
 	if !ok || index < 0 || index >= len(arr) {
 		return fmt.Errorf("invalid array or index %d", index)
 	}
@@ -531,11 +540,11 @@ func replaceInSlice(parent map[string]interface{}, key string, index int, value 
 }
 
 // applyMove applies a "move" operation from one path to another.
-func applyMove(target map[string]interface{}, fromParts, toParts []string) error {
-	var value interface{}
+func applyMove(target map[string]any, fromParts, toParts []string) error {
+	var value any
 	// Retrieve the value from the "from" path.
 	if key, idx, err := isTwoPartArray(target, fromParts); err == nil {
-		arr := target[key].([]interface{})
+		arr := target[key].([]any)
 		value = arr[idx]
 	} else {
 		parent, key, isArr, idx, err := traverseToParent(target, fromParts)
@@ -557,8 +566,8 @@ func applyMove(target map[string]interface{}, fromParts, toParts []string) error
 }
 
 // getFromSlice retrieves a value from a slice at the specified index.
-func getFromSlice(parent map[string]interface{}, key string, index int) interface{} {
-	arr, ok := parent[key].([]interface{})
+func getFromSlice(parent map[string]any, key string, index int) any {
+	arr, ok := parent[key].([]any)
 	if !ok || index < 0 || index >= len(arr) {
 		return nil
 	}

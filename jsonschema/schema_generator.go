@@ -130,7 +130,7 @@ func applyFieldTags(field reflect.StructField, schema map[string]any) {
 }
 
 // addNumericTags applies numeric-specific tags to a schema.
-func addNumericTags(field reflect.StructField, schema map[string]interface{}) {
+func addNumericTags(field reflect.StructField, schema map[string]any) {
 	typ, ok := schema[TypeKey].(string)
 	if !ok || (typ != TypeInteger && typ != TypeNumber) {
 		return

@@ -11,11 +11,11 @@ import (
 
 func TestGeneratePatch_NoChanges(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
+	before := map[string]any{
 		"name": "Alice",
 		"age":  30,
 	}
-	after := map[string]interface{}{
+	after := map[string]any{
 		"name": "Alice",
 		"age":  30,
 	}
@@ -30,13 +30,13 @@ func TestGeneratePatch_NoChanges(t *testing.T) {
 
 func TestGeneratePatch_FlatChanges(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
+	before := map[string]any{
 		"name":   "Alice",
 		"age":    30,
 		"city":   "NYC",
 		"status": "active",
 	}
-	after := map[string]interface{}{
+	after := map[string]any{
 		"name":    "Alice", // unchanged
 		"age":     31,      // replaced
 		"country": "USA",   // added
@@ -75,14 +75,14 @@ func TestGeneratePatch_FlatChanges(t *testing.T) {
 
 func TestGeneratePatch_NestedChanges(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
-		"user": map[string]interface{}{
+	before := map[string]any{
+		"user": map[string]any{
 			"name":  "Alice",
 			"email": "alice@old.com",
 		},
 	}
-	after := map[string]interface{}{
-		"user": map[string]interface{}{
+	after := map[string]any{
+		"user": map[string]any{
 			"name":  "Alice",
 			"email": "alice@new.com", // replaced
 			"age":   25,              // added
@@ -109,11 +109,11 @@ func TestGeneratePatch_NestedChanges(t *testing.T) {
 
 func TestGeneratePatch_ArrayAdd(t *testing.T) {
 	// Arrange: an element is added at the end of the array.
-	before := map[string]interface{}{
-		"list": []interface{}{1, 2, 3},
+	before := map[string]any{
+		"list": []any{1, 2, 3},
 	}
-	after := map[string]interface{}{
-		"list": []interface{}{1, 2, 3, 4},
+	after := map[string]any{
+		"list": []any{1, 2, 3, 4},
 	}
 
 	// Act
@@ -133,21 +133,21 @@ func TestGeneratePatch_ArrayAdd(t *testing.T) {
 
 func TestGeneratePatch_ArrayReplace(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
+	before := map[string]any{
 		"name": "Alice",
-		"details": map[string]interface{}{
+		"details": map[string]any{
 			"age":  31,
 			"city": "NYC",
 		},
-		"hobbies": []interface{}{"reading", "sports"},
+		"hobbies": []any{"reading", "sports"},
 	}
-	after := map[string]interface{}{
+	after := map[string]any{
 		"name": "Alice",
-		"details": map[string]interface{}{
+		"details": map[string]any{
 			"age":  31,
 			"city": "NYC",
 		},
-		"hobbies": []interface{}{"reading", "travel"},
+		"hobbies": []any{"reading", "travel"},
 	}
 	// Act
 	patch, err := GeneratePatch(before, after, "")
@@ -163,11 +163,11 @@ func TestGeneratePatch_ArrayReplace(t *testing.T) {
 
 func TestGeneratePatch_ArrayRemove(t *testing.T) {
 	// Arrange: an element is removed from the middle of the array.
-	before := map[string]interface{}{
-		"list": []interface{}{1, 2, 3, 4},
+	before := map[string]any{
+		"list": []any{1, 2, 3, 4},
 	}
-	after := map[string]interface{}{
-		"list": []interface{}{1, 2, 4},
+	after := map[string]any{
+		"list": []any{1, 2, 4},
 	}
 
 	// Act
@@ -187,11 +187,11 @@ func TestGeneratePatch_ArrayRemove(t *testing.T) {
 
 func TestGeneratePatch_ArrayMove(t *testing.T) {
 	// Arrange: array reordering (swapping first two elements).
-	before := map[string]interface{}{
-		"list": []interface{}{1, 2, 3},
+	before := map[string]any{
+		"list": []any{1, 2, 3},
 	}
-	after := map[string]interface{}{
-		"list": []interface{}{2, 1, 3},
+	after := map[string]any{
+		"list": []any{2, 1, 3},
 	}
 
 	// Act
@@ -211,11 +211,11 @@ func TestGeneratePatch_ArrayMove(t *testing.T) {
 
 func TestApplyPatch_Basic(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
+	before := map[string]any{
 		"name": "Alice",
 		"age":  30,
 	}
-	after := map[string]interface{}{
+	after := map[string]any{
 		"name": "Alice",
 		"age":  31,
 		"city": "NYC",
@@ -227,25 +227,24 @@ func TestApplyPatch_Basic(t *testing.T) {
 	result, err := ApplyPatch(before, patch)
 
 	// Assert: Use a type assertion to convert result to map.
-	resultMap, ok := result.(map[string]interface{})
-	assert.True(t, ok, "Result should be a map")
+
 	assert.NoError(t, err)
 
-	resultBytes, _ := json.Marshal(resultMap)
+	resultBytes, _ := json.Marshal(result)
 	afterBytes, _ := json.Marshal(after)
 	assert.Equal(t, string(afterBytes), string(resultBytes), "After applying patch, the result should match the 'after' state")
 }
 
 func TestApplyPatch_Nested(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
-		"user": map[string]interface{}{
+	before := map[string]any{
+		"user": map[string]any{
 			"name":  "Alice",
 			"email": "alice@old.com",
 		},
 	}
-	after := map[string]interface{}{
-		"user": map[string]interface{}{
+	after := map[string]any{
+		"user": map[string]any{
 			"name":  "Alice",
 			"email": "alice@new.com",
 			"age":   25,
@@ -258,22 +257,20 @@ func TestApplyPatch_Nested(t *testing.T) {
 	result, err := ApplyPatch(before, patch)
 
 	// Assert
-	resultMap, ok := result.(map[string]interface{})
-	assert.True(t, ok, "Result should be a map")
 	assert.NoError(t, err)
 
-	resultBytes, _ := json.Marshal(resultMap)
+	resultBytes, _ := json.Marshal(result)
 	afterBytes, _ := json.Marshal(after)
 	assert.Equal(t, string(afterBytes), string(resultBytes), "Nested objects should be updated correctly")
 }
 
 func TestApplyPatch_Array(t *testing.T) {
 	// Arrange
-	before := map[string]interface{}{
-		"list": []interface{}{1, 2, 3},
+	before := map[string]any{
+		"list": []any{1, 2, 3},
 	}
-	after := map[string]interface{}{
-		"list": []interface{}{1, 2, 3, 4},
+	after := map[string]any{
+		"list": []any{1, 2, 3, 4},
 	}
 	patch, err := GeneratePatch(before, after, "")
 	assert.NoError(t, err)
@@ -282,18 +279,15 @@ func TestApplyPatch_Array(t *testing.T) {
 	result, err := ApplyPatch(before, patch)
 
 	// Assert
-	resultMap, ok := result.(map[string]interface{})
-	assert.True(t, ok, "Result should be a map")
 	assert.NoError(t, err)
-
-	resultBytes, _ := json.Marshal(resultMap)
+	resultBytes, _ := json.Marshal(result)
 	afterBytes, _ := json.Marshal(after)
 	assert.Equal(t, string(afterBytes), string(resultBytes), "Array should be updated correctly after applying the patch")
 }
 
 func TestApplyPatch_MoveOperation(t *testing.T) {
 	// Arrange: move the value from key "first" to "third".
-	before := map[string]interface{}{
+	before := map[string]any{
 		"first":  "value1",
 		"second": "value2",
 	}
@@ -304,36 +298,34 @@ func TestApplyPatch_MoveOperation(t *testing.T) {
 	// Act
 	result, err := ApplyPatch(before, patch)
 
-	// Assert: Convert result to map.
-	resultMap, ok := result.(map[string]interface{})
-	assert.True(t, ok, "Result should be a map")
+	// Assert
 	assert.NoError(t, err)
 
-	_, exists := resultMap["first"]
+	_, exists := result["first"]
 	assert.False(t, exists, "Field 'first' should be removed after move")
-	val, exists := resultMap["third"]
+	val, exists := result["third"]
 	assert.True(t, exists, "Field 'third' should exist after move")
 	assert.Equal(t, "value1", val, "Field 'third' should have the moved value")
 }
 
 func TestGenerateThenApply_PreserveData(t *testing.T) {
 	// Arrange: a complex document with nested objects and arrays.
-	before := map[string]interface{}{
+	before := map[string]any{
 		"name": "Alice",
-		"details": map[string]interface{}{
+		"details": map[string]any{
 			"age":  30,
 			"city": "NYC",
 		},
-		"hobbies": []interface{}{"reading", "sports"},
+		"hobbies": []any{"reading", "sports"},
 	}
-	after := map[string]interface{}{
+	after := map[string]any{
 		"name": "Alice",
-		"details": map[string]interface{}{
+		"details": map[string]any{
 			"age":     31, // updated
 			"city":    "NYC",
 			"country": "USA", // added
 		},
-		"hobbies": []interface{}{"reading", "travel"}, // modified array
+		"hobbies": []any{"reading", "travel"}, // modified array
 	}
 	patch, err := GeneratePatch(before, after, "")
 	require.NoError(t, err)
@@ -343,9 +335,7 @@ func TestGenerateThenApply_PreserveData(t *testing.T) {
 
 	// Assert
 	assert.NoError(t, err)
-	resultMap, ok := result.(map[string]interface{})
-	assert.True(t, ok, "Result should be a map")
-	resultBytes, _ := json.Marshal(resultMap)
+	resultBytes, _ := json.Marshal(result)
 	afterBytes, _ := json.Marshal(after)
 	assert.Equal(t, string(afterBytes), string(resultBytes), "The final document should match the expected state")
 }
@@ -365,4 +355,74 @@ func TestPatchMarshalRoundtrip(t *testing.T) {
 
 	// Assert
 	assert.Equal(t, patch, unmarshaledPatch, "Unmarshaled patch should match the original")
+}
+
+func TestApplyPatchAndHydrate(t *testing.T) {
+	// Arrange
+	type Person struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+
+	before := &Person{Name: "Alice", Email: "a@old.com"}
+	after := &Person{Name: "Alice", Email: "a@new.com"}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+	assert.NoError(t, err)
+
+	var result Person
+	err = ApplyPatchAndHydrate(before, &result, patch)
+	require.NoError(t, err)
+	assert.Equal(t, after.Email, result.Email)
+}
+
+func TestGeneratePatch_NestedRemove(t *testing.T) {
+	// Arrange
+	before := map[string]any{
+		"user": map[string]any{
+			"name":  "Alice",
+			"email": "alice@old.com",
+		},
+	}
+	after := map[string]any{
+		"user": map[string]any{
+			"name": "Alice",
+		},
+	}
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+
+	assert.NoError(t, err)
+
+	var found bool
+	for _, op := range patch {
+		if op.Op == "remove" && op.Path == "/user/email" {
+			found = true
+		}
+	}
+	assert.True(t, found, "Expected remove operation for /user/email")
+}
+
+func TestGeneratePatch_IgnoresUnexportedFields(t *testing.T) {
+	// Arrange
+	type Example struct {
+		Public  string `json:"public"`
+		private string // unexported
+	}
+
+	before := &Example{Public: "a", private: "x"}
+	after := &Example{Public: "b", private: "x"}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+	assert.NoError(t, err)
+	assert.Len(t, patch, 1)
+	assert.Equal(t, "/public", patch[0].Path)
 }
