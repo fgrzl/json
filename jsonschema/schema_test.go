@@ -24,7 +24,7 @@ func assertSchemas(t *testing.T, input any, expected map[string]any, expectedCom
 	assert.Equal(t, expectedComponents, gotComponents)
 }
 
-func TestGenerateSchema_Required(t *testing.T) {
+func TestShouldIncludeRequiredFieldsGivenStructWithRequiredTags(t *testing.T) {
 	type TestStruct struct {
 		ID   int    `json:"id" required:"true"`
 		Name string `json:"name"`
@@ -42,7 +42,7 @@ func TestGenerateSchema_Required(t *testing.T) {
 	assertSchema(t, TestStruct{}, expected)
 }
 
-func TestGenerateSchema_NumericConstraints(t *testing.T) {
+func TestShouldApplyNumericConstraintsGivenFieldsWithValidationTags(t *testing.T) {
 	type TestStruct struct {
 		Number int `json:"number" minimum:"0" maximum:"100" multipleOf:"2"`
 	}
@@ -60,7 +60,7 @@ func TestGenerateSchema_NumericConstraints(t *testing.T) {
 	assertSchema(t, TestStruct{}, expected)
 }
 
-func TestGenerateSchema_StringConstraints(t *testing.T) {
+func TestShouldApplyStringConstraintsGivenFieldsWithStringValidationTags(t *testing.T) {
 	type TestStruct struct {
 		Text string `json:"text" minLength:"3" maxLength:"10" pattern:"^[a-z]+$" format:"email"`
 	}
@@ -79,7 +79,7 @@ func TestGenerateSchema_StringConstraints(t *testing.T) {
 	assertSchema(t, TestStruct{}, expected)
 }
 
-func TestGenerateSchema_Enum(t *testing.T) {
+func TestShouldGenerateEnumValuesGivenFieldWithEnumTag(t *testing.T) {
 	type TestStruct struct {
 		Choice string `json:"choice" enum:"option1, option2, option3"`
 	}
@@ -95,7 +95,7 @@ func TestGenerateSchema_Enum(t *testing.T) {
 	assertSchema(t, TestStruct{}, expected)
 }
 
-func TestGenerateSchema_AdditionalProperties(t *testing.T) {
+func TestShouldApplyAdditionalPropertiesConstraintGivenFieldWithTag(t *testing.T) {
 	type Nested struct {
 		Field string `json:"field"`
 	}
@@ -126,7 +126,7 @@ func TestGenerateSchema_AdditionalProperties(t *testing.T) {
 	assertSchema(t, TestStruct{}, expected)
 }
 
-func TestGenerateSchemaWithComponents_AdditionalProperties(t *testing.T) {
+func TestShouldGenerateComponentReferencesWhenGeneratingSchemaWithComponents(t *testing.T) {
 	type Nested struct {
 		Field string `json:"field"`
 	}
@@ -162,7 +162,7 @@ func TestGenerateSchemaWithComponents_AdditionalProperties(t *testing.T) {
 	assertSchemas(t, TestStruct{}, expected, expectedComponents)
 }
 
-func TestGenerateSchema_RawMessage(t *testing.T) {
+func TestShouldGenerateRawMessageWhenUsingRawMessageFunction(t *testing.T) {
 	type TestStruct struct {
 		ID   int    `json:"id" required:"true"`
 		Name string `json:"name"`

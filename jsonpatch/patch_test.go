@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGeneratePatch_NoChanges(t *testing.T) {
+func TestShouldGenerateNoPatchWhenNoChanges(t *testing.T) {
 	// Arrange
 	before := map[string]any{
 		"name": "Alice",
@@ -28,7 +28,7 @@ func TestGeneratePatch_NoChanges(t *testing.T) {
 	assert.Equal(t, 0, len(patch), "No patch should be generated when there are no changes")
 }
 
-func TestGeneratePatch_FlatChanges(t *testing.T) {
+func TestShouldGeneratePatchForFlatStructureChanges(t *testing.T) {
 	// Arrange
 	before := map[string]any{
 		"name":   "Alice",
@@ -73,7 +73,7 @@ func TestGeneratePatch_FlatChanges(t *testing.T) {
 	assert.Equal(t, "USA", addOp.Value)
 }
 
-func TestGeneratePatch_NestedChanges(t *testing.T) {
+func TestShouldGeneratePatchForNestedStructureChanges(t *testing.T) {
 	// Arrange
 	before := map[string]any{
 		"user": map[string]any{
@@ -107,7 +107,7 @@ func TestGeneratePatch_NestedChanges(t *testing.T) {
 	assert.True(t, foundAdd, "Expected add op for /user/age")
 }
 
-func TestGeneratePatch_ArrayAdd(t *testing.T) {
+func TestShouldGenerateAddOperationWhenArrayElementAdded(t *testing.T) {
 	// Arrange: an element is added at the end of the array.
 	before := map[string]any{
 		"list": []any{1, 2, 3},
@@ -209,7 +209,7 @@ func TestGeneratePatch_ArrayMove(t *testing.T) {
 	assert.True(t, found, "Expected move op for array reordering")
 }
 
-func TestApplyPatch_Basic(t *testing.T) {
+func TestShouldApplyBasicPatchOperationsCorrectly(t *testing.T) {
 	// Arrange
 	before := map[string]any{
 		"name": "Alice",
