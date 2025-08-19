@@ -210,6 +210,12 @@ import (
 - Use complete sentences starting with the name being documented
 - Include examples in doc comments when helpful
 
+### GoDoc Requirement for Exported APIs
+- Ensure every exported type, function, variable, and constant has a GoDoc comment.
+- Comments should follow the standard GoDoc format and start with the item name (for example: "Builder builds..." or "GenerateSchema returns...").
+- Prefer short, focused examples and show expected inputs/outputs for non-trivial APIs.
+- This repository will use GoDoc comments as part of code review criteria and automated documentation generation.
+
 ### Function Documentation
 ```go
 // RegisterType registers a polymorphic type T with the global registry.
@@ -224,3 +230,11 @@ func RegisterType[T any]() {
 ```
 
 These guidelines ensure consistent, maintainable, and well-tested Go code that follows established idioms and best practices.
+
+### Docs folder and file naming
+
+- Use a top-level `docs/` directory for project documentation.
+- Documentation files should follow the naming convention `docs/my-doc.md` (all lower-case, hyphen-separated if needed). Use `my-doc.md` as the canonical naming pattern when creating new docs.
+- When adding new documentation, include a short frontmatter summary (one paragraph) and a small "Try it" section when the doc demonstrates usage or commands.
+- Copilot should create docs under `docs/` and respect the `docs/my-doc.md` naming convention when suggesting or generating new documentation files.
+

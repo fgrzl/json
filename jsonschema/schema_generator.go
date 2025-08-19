@@ -80,6 +80,8 @@ func GenerateSchema(t reflect.Type) map[string]any {
 	return builder.Schema(t)
 }
 
+// GenerateSchema returns the JSON Schema for the provided reflect.Type.
+// This is a convenience wrapper around Builder.Schema.
 func GenerateSchemaWithComponents(t reflect.Type) (map[string]any, map[string]any) {
 	builder := NewBuilder()
 	return builder.SchemaWithComponents(t)
@@ -222,6 +224,7 @@ func RegisterSchema(t reflect.Type, schema map[string]any) {
 }
 
 // GenerateSchemaRawMessage returns a JSON Schema as a raw JSON message.
+// It returns nil if the schema cannot be marshaled.
 func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
 	schema := GenerateSchema(t)
 	raw, err := json.Marshal(schema)

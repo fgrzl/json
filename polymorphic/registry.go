@@ -5,7 +5,9 @@ import (
 	"sync"
 )
 
-// Polymorphic ensures types implement GetDiscriminator().
+// Polymorphic is implemented by types that expose a discriminator string
+// used to identify the concrete implementation when serializing or
+// deserializing polymorphic values.
 type Polymorphic interface {
 	GetDiscriminator() string
 }
@@ -15,23 +17,28 @@ type TypeFactory = func() any
 
 var types sync.Map
 
-// Register stores a factory function with its discriminator.
+// RegisterWithDiscriminator stores a factory function under the given
+// discriminator. The factory should return a pointer to a zero-value
+// instance of the concrete type.
 func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
 	types.Store(discriminator, factory)
 }
 
+// Register registers a factory for a Polymorphic type using a factory
+// function that returns the concrete instance. The registration uses
+// the discriminator value returned by the instance produced by the
+// factory.
 func Register[T Polymorphic](factory func() T) {
-	// Create an actual instance using the factory to get the discriminator
 	instance := factory()
-
-	// Get discriminator
 	discriminator := instance.GetDiscriminator()
-
 	RegisterWithDiscriminator(discriminator, func() any { return factory() })
 }
 
 func ctor[T any]() func() *T { return func() *T { return new(T) } }
 
+// RegisterType is a convenience helper that registers a type T where
+// *T implements Polymorphic. It will panic if *T does not implement
+// the Polymorphic interface.
 func RegisterType[T any]() {
 	factory := ctor[T]()
 
@@ -47,7 +54,9 @@ func RegisterType[T any]() {
 	})
 }
 
-// CreateInstance creates an instance based on the discriminator.
+// CreateInstance creates a new instance for the given discriminator.
+// It returns the instance as a Polymorphic interface or an error if the
+// discriminator is not registered.
 func CreateInstance(discriminator string) (Polymorphic, error) {
 	if factory, ok := types.Load(discriminator); ok {
 		instance := factory.(TypeFactory)()
@@ -60,6 +69,8 @@ func CreateInstance(discriminator string) (Polymorphic, error) {
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
 }
 
+// LoadFactory returns the factory function registered for the
+// discriminator, or an error if there is none.
 func LoadFactory(discriminator string) (TypeFactory, error) {
 	if factory, ok := types.Load(discriminator); ok {
 		typedFactory, ok := factory.(TypeFactory)
@@ -71,6 +82,8 @@ func LoadFactory(discriminator string) (TypeFactory, error) {
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
 }
 
+// ClearRegistry removes all registered factories. Useful in tests to
+// reset global state.
 func ClearRegistry() {
 	types.Range(func(k, v any) bool {
 		types.Delete(k)

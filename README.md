@@ -1,233 +1,128 @@
 [![ci](https://github.com/fgrzl/json/actions/workflows/ci.yml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/ci.yml)
 [![Dependabot Updates](https://github.com/fgrzl/json/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fgrzl/json/actions/workflows/dependabot/dependabot-updates)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=fgrzl_json&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=fgrzl_json)
-# JSON 
 
-## JSON Schema
+# JSON
 
-This package provides functionality to generate JSON schemas from Go types.
+This repository contains small, focused Go packages for common JSON tasks:
 
-## Functions
+- `jsonschema` — generate JSON Schema from Go types.
+- `jsonpatch` — compute and apply RFC 6902 JSON Patch operations.
+- `polymorphic` — register and marshal/unmarshal polymorphic types using a discriminator envelope.
 
-### GenerateSchema
+Quick start
+-----------
 
-The `GenerateSchema` function takes a `reflect.Type` and generates a JSON schema as a `map[string]any`. It supports the following Go types:
+These short examples help someone new to the project get started quickly. For more advanced usage and examples, see `docs/jsonschema.md`, `docs/jsonpatch.md`, and `docs/polymorphic.md`.
 
-- `struct`: Generates an "object" type schema with properties.
-- `slice` and `array`: Generates an "array" type schema with items.
-- `map`: Generates an "object" type schema with additional properties.
-- `int`, `int8`, `int16`, `int32`, `int64`: Generates an "integer" type schema.
-- `float32`, `float64`: Generates a "number" type schema.
-- `bool`: Generates a "boolean" type schema.
-- `string`: Generates a "string" type schema.
-- Other types default to a "string" type schema.
+Prerequisites
+-------------
 
-```go
-func GenerateSchema(t reflect.Type) map[string]any
-```
+Make sure you have a Go toolchain installed (Go 1.20+ recommended). Add the module to your project with the module path `github.com/fgrzl/json`.
 
-Example usage:
+jsonschema — quick start
+------------------------
+
+Generate a simple schema for a Go struct:
 
 ```go
 package main
 
 import (
-    "fmt"
-    "reflect"
-    "jsonschema"
+  "encoding/json"
+  "fmt"
+  "github.com/fgrzl/json/jsonschema"
 )
 
-type Example struct {
-    Name        string `json:"name" title:"Name" description:"The name of the person" minLength:"1" maxLength:"100"`
-    Age         int    `json:"age" minimum:"0" maximum:"150"`
-    Email       string `json:"email" format:"email"`
-    Tags        []string `json:"tags" minItems:"1" uniqueItems:"true"`
-    Preferences map[string]any `json:"preferences" additionalProperties:"true"`
-    Password    string `json:"password" required:"true" pattern:"^[a-zA-Z0-9]{8,}$"`
+func main() {
+  b := jsonschema.NewBuilder()
+  s := b.Schema(struct{ Name string `json:"name"` }{})
+  out, _ := json.MarshalIndent(s, "", "  ")
+  fmt.Println(string(out))
 }
+```
+
+See `docs/jsonschema.md` for advanced scenarios: components, self-referential types, nullable fields, and tags.
+
+jsonpatch — quick start
+-----------------------
+
+Compute a patch and apply it:
+
+```go
+package main
+
+import (
+  "encoding/json"
+  "fmt"
+  "github.com/fgrzl/json/jsonpatch"
+)
 
 func main() {
-    schema := jsonschema.GenerateSchema(reflect.TypeOf(Example{}))
-    fmt.Println(schema)
-}
-```
+  before := map[string]any{"a": 1, "b": 2}
+  after := map[string]any{"a": 1, "b": 3, "c": 4}
 
-### Supported Tags
-
-- **Numeric constraints**:
-  - `minimum`: Specifies the minimum value.
-  - `maximum`: Specifies the maximum value.
-  - `multipleOf`: Specifies that the value must be a multiple of this number.
-
-- **String constraints**:
-  - `minLength`: Specifies the minimum length of the string.
-  - `maxLength`: Specifies the maximum length of the string.
-  - `pattern`: Specifies a regular expression that the string must match.
-  - `format`: Specifies the format of the string (e.g., `email`, `date`).
-
-- **Array constraints**:
-  - `minItems`: Specifies the minimum number of items in the array.
-  - `maxItems`: Specifies the maximum number of items in the array.
-  - `uniqueItems`: Specifies whether all items in the array must be unique.
-
-- **Enum support**:
-  - `enum`: Specifies a comma-separated list of valid values.
-
-- **Metadata**:
-  - `title`: Specifies the title of the schema.
-  - `description`: Specifies the description of the schema.
-  - `default`: Specifies the default value.
-  - `dataSource` : Specifies a keyword to indicate options
-  - `componentId` : Specifies a UI component ID
-
-**define the data source as an API**
-```json
-{
-  "type": "object",
-  "properties": {
-    "category": {
-      "type": "string",
-      "dataSource": {
-        "url": "https://api.example.com/categories",
-        "method": "GET",
-        "valueField": "id",
-        "labelField": "name"
-      }
-    }
+  patch := jsonpatch.GeneratePatch(before, after)
+  updated, err := jsonpatch.ApplyPatch(before, patch)
+  if err != nil {
+    panic(err)
   }
+  out, _ := json.MarshalIndent(updated, "", "  ")
+  fmt.Println(string(out))
 }
 ```
 
+See `docs/jsonpatch.md` for advanced scenarios: array heuristics, patch hydration, and performance tips.
 
-**define the data source as a token**
-```json
-{
-  "type": "object",
-  "properties": {
-    "category": {
-      "type": "string",
-      "dataSource": "categories"
-    }
-  }
-}
-```
+polymorphic — quick start
+-------------------------
 
-- **Composition keywords**:
-  - `oneOf`: Specifies a comma-separated list of schemas, one of which must be valid.
-  - `anyOf`: Specifies a comma-separated list of schemas, any of which must be valid.
-  - `allOf`: Specifies a comma-separated list of schemas, all of which must be valid.
-  - `not`: Specifies a schema that must not be valid.
-
-- **Required field**:
-  - `required`: Specifies whether the field is required.
-
-- **Additional properties**:
-  - `additionalProperties`: Specifies whether additional properties are allowed (e.g., `true`, `false`, or a schema reference).
-
-## JSON Patch
-
-The `jsonpatch` package provides utilities to generate and apply JSON Patch operations. JSON Patch is a format for describing changes to a JSON document. It can be used to update a JSON document by sending the changes rather than the entire document.
-
-### Features
-
-- Generate JSON Patch operations by comparing two JSON documents.
-- Apply JSON Patch operations to a JSON document.
-- Supports add, remove, replace, and move operations.
-
-### Usage
-
-To generate a patch:
+Register a concrete type and (un)marshal via the envelope:
 
 ```go
-import "github.com/fgrzl/json/jsonpatch"
+package main
 
-before := map[string]any{"foo": "bar"}
-after := map[string]any{"foo": "baz"}
+import (
+  "encoding/json"
+  "fmt"
+  "github.com/fgrzl/json/polymorphic"
+)
 
-patches, err := jsonpatch.GeneratePatch(before, after, "")
-if err != nil {
-    // handle error
+type Person struct{ Name string `json:"name"` }
+
+func (p *Person) GetDiscriminator() string { return "person" }
+
+func init() { polymorphic.RegisterType[Person]() }
+
+func main() {
+  env := polymorphic.NewEnvelope("person", &Person{Name: "Alice"})
+  data, _ := polymorphic.MarshalPolymorphicJSON(env)
+
+  inst, err := polymorphic.UnmarshalPolymorphicJSON(data)
+  if err != nil { panic(err) }
+  person := inst.(*Person)
+  fmt.Println(person.Name)
 }
 ```
 
-To apply a patch:
+See `docs/polymorphic.md` for advanced scenarios: custom discriminators, registry management, and testing patterns.
 
-```go
-import "github.com/fgrzl/json/jsonpatch"
+Contributing and docs
+---------------------
 
-original := map[string]any{"foo": "bar"}
-patches := []jsonpatch.Patch{
-    {Op: "replace", Path: "/foo", Value: "baz"},
-}
+Add more guides under `docs/` using the naming convention `docs/my-doc.md` (all lower-case, hyphen-separated). Each package should keep a `docs/{package}.md` file with advanced examples and edge cases.
 
-updated, err := jsonpatch.ApplyPatch(original, patches)
-if err != nil {
-    // handle error
-}
+Running tests
+-------------
+
+Run package tests locally:
+
+```shell
+go test ./...
 ```
 
-## Polymorphic JSON
+For formatting:
 
-The `polymorphic` package provides utilities to handle polymorphic JSON serialization and deserialization. It allows you to register types with a discriminator and serialize/deserialize JSON data with type information.
-
-### Features
-
-- Register types with a discriminator.
-- Serialize objects with type information.
-- Deserialize JSON data into the correct type based on the discriminator.
-
-### Usage
-
-To register a type:
-
-```go
-import "github.com/fgrzl/json/polymorphic"
-
-type Animal struct {
-    Name string `json:"name"`
-}
-
-type Dog struct {
-    Animal
-    Breed string `json:"breed"`
-}
-
-func init() {
-    polymorphic.Register("dog", func() any { return &Dog{} })
-}
-```
-
-To serialize an object:
-
-```go
-import "github.com/fgrzl/json/polymorphic"
-
-dog := &Dog{
-    Animal: Animal{Name: "Buddy"},
-    Breed:  "Golden Retriever",
-}
-
-data, err := polymorphic.MarshalPolymorphicJSON("dog", dog)
-if err != nil {
-    // handle error
-}
-fmt.Println(string(data))
-```
-
-To deserialize JSON data:
-
-```go
-import "github.com/fgrzl/json/polymorphic"
-
-var envelope polymorphic.Envelope
-err := json.Unmarshal(data, &envelope)
-if err != nil {
-    // handle error
-}
-
-dog, ok := envelope.Content.(*Dog)
-if !ok {
-    // handle error
-}
-fmt.Printf("Deserialized dog: %+v\n", dog)
+```shell
+gofmt -w .
 ```

@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-// Patch represents a single JSON Patch operation.
+// Patch represents a single JSON Patch operation as defined by RFC 6902.
+// The Op field is the operation (add, remove, replace, move). Path is
+// the JSON Pointer location. From is used by move operations and Value
+// holds the operation payload when applicable.
 type Patch struct {
 	Op    string `json:"op"`
 	Path  string `json:"path"`
@@ -17,6 +20,14 @@ type Patch struct {
 	Value any    `json:"value,omitempty"`
 }
 
+// GeneratePatch computes a list of JSON Patch operations that transform
+// the `before` document into the `after` document. Both inputs may be
+// structs or maps; basePath should be the JSON Pointer prefix (e.g.
+// "" or "/root").
+//
+// The function attempts to produce minimal patches for arrays using an
+// LCS-based algorithm and treats string equality with trimmed
+// whitespace.
 func GeneratePatch(before, after any, basePath string) ([]Patch, error) {
 	patches := []Patch{}
 	beforeMap, err := toMap(before)
@@ -74,8 +85,10 @@ func GeneratePatch(before, after any, basePath string) ([]Patch, error) {
 	return patches, nil
 }
 
-// ApplyPatch applies a series of JSON Patch operations to the original JSON object.
-// RFC 6902 compliance: Operations are atomic - either all succeed or all fail.
+// ApplyPatch applies a series of JSON Patch operations to the original
+// JSON-like object (struct or map). It returns the patched document as
+// a map[string]any. The implementation applies operations sequentially
+// and returns an error on the first failing operation.
 func ApplyPatch(original any, patches []Patch) (map[string]any, error) {
 	originalMap, err := toMap(original)
 	if err != nil {
@@ -117,6 +130,9 @@ func ApplyPatch(original any, patches []Patch) (map[string]any, error) {
 	return target, nil
 }
 
+// ApplyPatchAndHydrate applies patches to `original` and unmarshals the
+// resulting document into `updated` (which should be a pointer). This is
+// a convenience for applying patches and then hydrating a typed value.
 func ApplyPatchAndHydrate(original, updated any, patches []Patch) error {
 	// Convert original to map
 	patched, err := ApplyPatch(original, patches)
