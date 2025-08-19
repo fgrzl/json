@@ -36,6 +36,9 @@ jobs:
       - name: Download Dependencies
         run: go mod download
 
+      - name: Vet Project
+        run: go vet ./...
+
       - name: Build Project
         run: go build ./...
 
