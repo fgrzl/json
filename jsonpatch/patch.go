@@ -75,11 +75,16 @@ func GeneratePatch(before, after any, basePath string) ([]Patch, error) {
 }
 
 // ApplyPatch applies a series of JSON Patch operations to the original JSON object.
+// RFC 6902 compliance: Operations are atomic - either all succeed or all fail.
 func ApplyPatch(original any, patches []Patch) (map[string]any, error) {
-	target, err := toMap(original)
+	originalMap, err := toMap(original)
 	if err != nil {
 		return nil, err
 	}
+
+	// Create a deep copy to ensure atomicity
+	target := deepCopy(originalMap)
+
 	// Process each patch sequentially.
 	for _, op := range patches {
 		parts, err := parsePath(op.Path)
@@ -156,7 +161,7 @@ func toMap(data any) (map[string]any, error) {
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
 
-		// 3. Skip unexported fields
+		// Skip unexported fields
 		if field.PkgPath != "" {
 			continue
 		}
@@ -165,14 +170,63 @@ func toMap(data any) (map[string]any, error) {
 		key := field.Name
 		if tag := field.Tag.Get("json"); tag != "" {
 			parts := strings.Split(tag, ",")
-			if parts[0] != "" && parts[0] != "-" {
+			if parts[0] == "-" {
+				// Skip fields marked with json:"-"
+				continue
+			}
+			if parts[0] != "" {
 				key = parts[0]
 			}
 		}
 
-		result[key] = v.Field(i).Interface()
+		result[key] = convertValue(v.Field(i).Interface())
 	}
 	return result, nil
+}
+
+// convertValue recursively converts structs to maps for consistent handling
+func convertValue(data any) any {
+	if data == nil {
+		return nil
+	}
+
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+
+	switch v.Kind() {
+	case reflect.Struct:
+		// Convert nested struct to map
+		m, err := toMap(data)
+		if err != nil {
+			return data // fallback to original value
+		}
+		return m
+	case reflect.Slice, reflect.Array:
+		// Convert slice/array elements
+		result := make([]any, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			result[i] = convertValue(v.Index(i).Interface())
+		}
+		return result
+	case reflect.Map:
+		// Convert map values
+		if v.Type().Key().Kind() == reflect.String {
+			result := make(map[string]any)
+			for _, key := range v.MapKeys() {
+				keyStr := key.String()
+				result[keyStr] = convertValue(v.MapIndex(key).Interface())
+			}
+			return result
+		}
+		return data
+	default:
+		return data
+	}
 }
 
 // toSlice converts an array/slice to []any using reflection.
@@ -189,6 +243,38 @@ func toSlice(data any) ([]any, error) {
 		result[i] = v.Index(i).Interface()
 	}
 	return result, nil
+}
+
+// deepCopy creates a deep copy of a map[string]any structure
+func deepCopy(original map[string]any) map[string]any {
+	copy := make(map[string]any)
+	for key, value := range original {
+		switch v := value.(type) {
+		case map[string]any:
+			copy[key] = deepCopy(v)
+		case []any:
+			copy[key] = deepCopySlice(v)
+		default:
+			copy[key] = v
+		}
+	}
+	return copy
+}
+
+// deepCopySlice creates a deep copy of a []any slice
+func deepCopySlice(original []any) []any {
+	copy := make([]any, len(original))
+	for i, value := range original {
+		switch v := value.(type) {
+		case map[string]any:
+			copy[i] = deepCopy(v)
+		case []any:
+			copy[i] = deepCopySlice(v)
+		default:
+			copy[i] = v
+		}
+	}
+	return copy
 }
 
 // deepEqualFiltered compares two values.
@@ -365,7 +451,14 @@ func parsePath(path string) ([]string, error) {
 	if path == "" {
 		return nil, fmt.Errorf("empty path")
 	}
-	return strings.Split(strings.Trim(path, "/"), "/"), nil
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Check for empty parts (e.g., from path "/")
+	for _, part := range parts {
+		if part == "" {
+			return nil, fmt.Errorf("invalid path: contains empty component")
+		}
+	}
+	return parts, nil
 }
 
 // isTwoPartArray checks if the path has exactly two parts and that the first part
@@ -387,7 +480,20 @@ func isTwoPartArray(target map[string]any, parts []string) (string, int, error) 
 }
 
 // traverseToParent walks the target object to the parent of the final key in the path.
+// traverseToParent navigates to the parent container of the target path.
+// For array indices, strictBounds controls whether out-of-bounds indices are allowed.
+// When strictBounds is false, allows index == len(array) for append operations.
 func traverseToParent(target map[string]any, parts []string) (map[string]any, string, bool, int, error) {
+	return traverseToParentWithBounds(target, parts, true)
+}
+
+// traverseToParentForAdd is a variant for add operations that allows appending to arrays.
+func traverseToParentForAdd(target map[string]any, parts []string) (map[string]any, string, bool, int, error) {
+	return traverseToParentWithBounds(target, parts, false)
+}
+
+// traverseToParentWithBounds navigates to the parent container with configurable bounds checking.
+func traverseToParentWithBounds(target map[string]any, parts []string, strictBounds bool) (map[string]any, string, bool, int, error) {
 	parent := target
 	// Iterate through all but the last segment.
 	for i := 0; i < len(parts)-1; i++ {
@@ -396,13 +502,24 @@ func traverseToParent(target map[string]any, parts []string) (map[string]any, st
 		if !exists {
 			return nil, "", false, -1, fmt.Errorf("path %s does not exist", strings.Join(parts[:i+1], "/"))
 		}
+
 		// If we're at the second-to-last segment and the value is an array,
 		// then treat the next segment as an index.
 		if i == len(parts)-2 {
 			if arr, ok := val.([]any); ok {
 				j, err := strconv.Atoi(parts[i+1])
-				if err != nil || j < 0 || j >= len(arr) {
+				if err != nil {
 					return nil, "", false, -1, fmt.Errorf("invalid index %s", parts[i+1])
+				}
+				// Check bounds based on strictBounds parameter
+				if strictBounds {
+					if j < 0 || j >= len(arr) {
+						return nil, "", false, -1, fmt.Errorf("invalid index %s", parts[i+1])
+					}
+				} else {
+					if j < 0 || j > len(arr) {
+						return nil, "", false, -1, fmt.Errorf("invalid index %s", parts[i+1])
+					}
 				}
 				return parent, part, true, j, nil
 			}
@@ -413,7 +530,28 @@ func traverseToParent(target map[string]any, parts []string) (map[string]any, st
 			}
 			return nil, "", false, -1, fmt.Errorf("unexpected type at %s", part)
 		} else {
-			if m, ok := val.(map[string]any); ok {
+			// Handle arrays in the middle of the path
+			if arr, ok := val.([]any); ok {
+				// Check if the next part is a valid array index
+				if i+1 < len(parts) {
+					if idx, err := strconv.Atoi(parts[i+1]); err == nil {
+						if idx < 0 || idx >= len(arr) {
+							return nil, "", false, -1, fmt.Errorf("index %d out of bounds", idx)
+						}
+						// Get the array element and continue traversal
+						arrayElement := arr[idx]
+						if m, ok := arrayElement.(map[string]any); ok {
+							parent = m
+							i++ // Skip the index part since we processed it
+							continue
+						} else {
+							return nil, "", false, -1, fmt.Errorf("expected map at array index %d", idx)
+						}
+					} else {
+						return nil, "", false, -1, fmt.Errorf("expected numeric index for array access, got %s", parts[i+1])
+					}
+				}
+			} else if m, ok := val.(map[string]any); ok {
 				parent = m
 			} else {
 				return nil, "", false, -1, fmt.Errorf("expected map at %s", part)
@@ -421,9 +559,7 @@ func traverseToParent(target map[string]any, parts []string) (map[string]any, st
 		}
 	}
 	return parent, parts[len(parts)-1], false, -1, nil
-}
-
-// applyAdd applies an "add" operation at the given path with the specified value.
+} // applyAdd applies an "add" operation at the given path with the specified value.
 func applyAdd(target map[string]any, parts []string, value any) error {
 	// Special handling for a two-part path that targets an array's end.
 	if len(parts) == 2 {
@@ -445,8 +581,8 @@ func applyAdd(target map[string]any, parts []string, value any) error {
 		}
 		return nil
 	}
-	// Otherwise, traverse to the parent container.
-	parent, key, isArr, idx, err := traverseToParent(target, parts)
+	// Otherwise, traverse to the parent container with lenient bounds for add operations.
+	parent, key, isArr, idx, err := traverseToParentForAdd(target, parts)
 	if err != nil {
 		return err
 	}
@@ -476,9 +612,13 @@ func insertIntoSlice(parent map[string]any, key string, index int, value any) er
 }
 
 // applyRemove applies a "remove" operation at the given path.
+// RFC 6902 compliance: Must fail if the path does not exist.
 func applyRemove(target map[string]any, parts []string) error {
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr := target[key].([]any)
+		arr, ok := target[key].([]any)
+		if !ok {
+			return fmt.Errorf("path %s does not exist or is not an array", strings.Join(parts, "/"))
+		}
 		if idx < 0 || idx >= len(arr) {
 			return fmt.Errorf("index %d out of bounds", idx)
 		}
@@ -492,6 +632,12 @@ func applyRemove(target map[string]any, parts []string) error {
 	if isArr {
 		return removeFromSlice(parent, key, idx)
 	}
+
+	// RFC 6902 compliance: Check if key exists before removing
+	if _, exists := parent[key]; !exists {
+		return fmt.Errorf("path %s does not exist", strings.Join(parts, "/"))
+	}
+
 	delete(parent, key)
 	return nil
 }
@@ -507,9 +653,13 @@ func removeFromSlice(parent map[string]any, key string, index int) error {
 }
 
 // applyReplace applies a "replace" operation at the given path.
+// RFC 6902 compliance: Must fail if the path does not exist.
 func applyReplace(target map[string]any, parts []string, value any) error {
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr := target[key].([]any)
+		arr, ok := target[key].([]any)
+		if !ok {
+			return fmt.Errorf("path %s does not exist or is not an array", strings.Join(parts, "/"))
+		}
 		if idx < 0 || idx >= len(arr) {
 			return fmt.Errorf("index %d out of bounds", idx)
 		}
@@ -524,6 +674,12 @@ func applyReplace(target map[string]any, parts []string, value any) error {
 	if isArr {
 		return replaceInSlice(parent, key, idx, value)
 	}
+
+	// RFC 6902 compliance: Check if key exists before replacing
+	if _, exists := parent[key]; !exists {
+		return fmt.Errorf("path %s does not exist", strings.Join(parts, "/"))
+	}
+
 	parent[key] = value
 	return nil
 }
@@ -540,11 +696,18 @@ func replaceInSlice(parent map[string]any, key string, index int, value any) err
 }
 
 // applyMove applies a "move" operation from one path to another.
+// RFC 6902 compliance: Must fail if the "from" path does not exist.
 func applyMove(target map[string]any, fromParts, toParts []string) error {
 	var value any
 	// Retrieve the value from the "from" path.
 	if key, idx, err := isTwoPartArray(target, fromParts); err == nil {
-		arr := target[key].([]any)
+		arr, ok := target[key].([]any)
+		if !ok {
+			return fmt.Errorf("path %s does not exist or is not an array", strings.Join(fromParts, "/"))
+		}
+		if idx < 0 || idx >= len(arr) {
+			return fmt.Errorf("index %d out of bounds", idx)
+		}
 		value = arr[idx]
 	} else {
 		parent, key, isArr, idx, err := traverseToParent(target, fromParts)
@@ -553,8 +716,15 @@ func applyMove(target map[string]any, fromParts, toParts []string) error {
 		}
 		if isArr {
 			value = getFromSlice(parent, key, idx)
+			if value == nil {
+				return fmt.Errorf("path %s does not exist", strings.Join(fromParts, "/"))
+			}
 		} else {
-			value = parent[key]
+			// RFC 6902 compliance: Check if key exists before moving
+			var exists bool
+			if value, exists = parent[key]; !exists {
+				return fmt.Errorf("path %s does not exist", strings.Join(fromParts, "/"))
+			}
 		}
 	}
 	// Remove from the original location.
