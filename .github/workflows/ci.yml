@@ -40,7 +40,7 @@ jobs:
         run: go build ./...
 
       - name: Run Tests
-        run: go test ./... -v -coverprofile=coverage.out
+        run: go test ./... -v -cover
 
       - name: Workflow Cleanup
         uses: fgrzl/actions/workflow-cleanup@v0.0.5
