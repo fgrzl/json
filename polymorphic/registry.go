@@ -21,13 +21,30 @@ func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
 }
 
 func Register[T Polymorphic](factory func() T) {
-	// Ensure T is a pointer at compile-time
-	var instance T
+	// Create an actual instance using the factory to get the discriminator
+	instance := factory()
 
 	// Get discriminator
 	discriminator := instance.GetDiscriminator()
 
 	RegisterWithDiscriminator(discriminator, func() any { return factory() })
+}
+
+func ctor[T any]() func() *T { return func() *T { return new(T) } }
+
+func RegisterType[T any]() {
+	factory := ctor[T]()
+
+	// Verify that *T implements Polymorphic by creating an instance
+	instance := factory()
+	if _, ok := any(instance).(Polymorphic); !ok {
+		panic(fmt.Sprintf("type %T does not implement Polymorphic interface", instance))
+	}
+
+	// Create a wrapper that satisfies the Register function's type constraint
+	Register(func() Polymorphic {
+		return any(factory()).(Polymorphic)
+	})
 }
 
 // CreateInstance creates an instance based on the discriminator.
