@@ -75,6 +75,46 @@ var registeredSchemas = map[reflect.Type]map[string]any{
 	},
 }
 
+// rawMessageType is the reflect.Type for json.RawMessage and is used to
+// ensure RawMessage is treated as raw JSON (empty schema) rather than a
+// byte slice.
+var rawMessageType = reflect.TypeOf(json.RawMessage{})
+
+// getRegisteredSchema attempts to find a registered schema for the
+// provided type. It handles a few special cases such as named
+// types whose underlying type is []byte (including json.RawMessage).
+func getRegisteredSchema(t reflect.Type) (map[string]any, bool) {
+	if t == nil {
+		return nil, false
+	}
+
+	// Normalize pointers
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Special-case json.RawMessage: treat as an empty schema (raw JSON)
+	if t == rawMessageType {
+		return map[string]any{}, true
+	}
+
+	// Check for an exact registered schema first (handles named types
+	// like uuid.UUID which may be underlying arrays of bytes).
+	if s, ok := registeredSchemas[t]; ok {
+		return s, true
+	}
+
+	// If this is a slice/array of bytes (anonymous []byte or [N]byte),
+	// fall back to the []byte registered schema.
+	if (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) && t.Elem().Kind() == reflect.Uint8 {
+		if s, ok := registeredSchemas[reflect.TypeOf([]byte{})]; ok {
+			return s, true
+		}
+	}
+
+	return nil, false
+}
+
 func GenerateSchema(t reflect.Type) map[string]any {
 	builder := NewBuilder()
 	return builder.Schema(t)
@@ -119,8 +159,34 @@ func applyFieldTags(field reflect.StructField, schema map[string]any) {
 		{AdditionalPropertiesKey, func(v string, s map[string]any) {
 			if v == "false" {
 				s[AdditionalPropertiesKey] = false
-			} else {
+				return
+			}
+
+			// Determine if this field is a json.RawMessage so we can
+			// coerce it to an object when additionalProperties is used.
+			ft := field.Type
+			if ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+
+			if ft == rawMessageType || len(s) == 0 {
+				// For RawMessage or empty schemas, treat the field as an object
+				// when additionalProperties is specified.
+				s[TypeKey] = TypeObject
+				if strings.HasPrefix(v, "#") {
+					s[AdditionalPropertiesKey] = map[string]any{RefKey: v}
+				} else {
+					s[AdditionalPropertiesKey] = map[string]any{}
+				}
+				return
+			}
+
+			// For non-raw fields, do not change the existing type; only set
+			// the additionalProperties value (allowing refs or empty schema).
+			if strings.HasPrefix(v, "#") {
 				s[AdditionalPropertiesKey] = map[string]any{RefKey: v}
+			} else {
+				s[AdditionalPropertiesKey] = map[string]any{}
 			}
 		}},
 		{FormatKey, func(v string, s map[string]any) { s[FormatKey] = v }},
