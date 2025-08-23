@@ -285,7 +285,7 @@ func RegisterSchema(t reflect.Type, schema map[string]any) {
 		t = t.Elem()
 	}
 	if schema != nil {
-	registeredSchemas[t] = schema
+		registeredSchemas[t] = schema
 	}
 }
 
