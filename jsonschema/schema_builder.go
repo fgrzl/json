@@ -87,7 +87,7 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 		slog.Info("generate schema", "type", name)
 	}
 
-	if schema, ok := registeredSchemas[t]; ok {
+	if schema, ok := getRegisteredSchema(t); ok {
 		return schema
 	}
 
@@ -142,7 +142,7 @@ func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
 		t = t.Elem()
 	}
 
-	if schema, ok := registeredSchemas[t]; ok {
+	if schema, ok := getRegisteredSchema(t); ok {
 		return schema
 	}
 
@@ -286,7 +286,7 @@ func isEligibleForRef(t reflect.Type) bool {
 		return false
 	}
 
-	_, known := registeredSchemas[t]
+	_, known := getRegisteredSchema(t)
 	return !known
 }
 

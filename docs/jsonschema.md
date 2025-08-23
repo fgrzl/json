@@ -85,6 +85,28 @@ Supported tags include numeric bounds (`minimum`, `maximum`), string lengths
 (`minLength`, `maxLength`), regex `pattern`, array constraints (`minItems`,
 `uniqueItems`), and custom metadata keywords like `dataSource` and `componentId`.
 
+6) json.RawMessage and additionalProperties
+
+The generator treats `json.RawMessage` as "raw JSON" by default. That means
+the field's schema is the empty schema (no `type` or properties) unless tags
+are used to further constrain it. This is helpful when the field may contain
+arbitrary JSON that you don't want to model strictly in Go.
+
+When using the `additionalProperties` struct tag you can control how the
+generator represents additional properties for object-like fields:
+
+- `additionalProperties:"false"` -> sets `additionalProperties: false` on the
+  field's schema.
+- `additionalProperties:"true"` -> for raw JSON fields or empty schemas the
+  generator will coerce the field to an object and set `additionalProperties`
+  to an empty schema (allow anything). For non-raw typed fields the field's
+  existing type is preserved and `additionalProperties` is set to an empty
+  schema.
+- `additionalProperties:"#/definitions/MySchema"` (or any value starting
+  with `#`) -> the generator sets `additionalProperties: { "$ref": "..." }`.
+
+This allows mixing flexible raw JSON with more strictly typed nested schemas.
+
 5) Tips & gotchas
 
 - The builder expects a non-nil reflect.Type for the root; passing a nil value
