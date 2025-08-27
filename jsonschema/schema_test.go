@@ -399,6 +399,39 @@ func TestShouldApplyArrayTagsGivenArrayValidationTags(t *testing.T) {
 	})
 }
 
+func TestRawMessageDefaultIsEmptySchema(t *testing.T) {
+	type TestStruct struct {
+		Data json.RawMessage `json:"data"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"data": map[string]any{},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestRawMessageWithAdditionalPropertiesTagIsObjectWithAdditionalProperties(t *testing.T) {
+	type TestStruct struct {
+		Data json.RawMessage `json:"data" additionalProperties:"true"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"data": map[string]any{
+				"type":                 "object",
+				"additionalProperties": map[string]any{},
+			},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
+}
+
 func TestShouldApplyCustomTagsGivenFieldsWithCustomTags(t *testing.T) {
 	// Arrange
 	type TestStruct struct {
