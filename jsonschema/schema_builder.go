@@ -6,6 +6,7 @@ package jsonschema
 import (
 	"log/slog"
 	"reflect"
+	"strings"
 
 	"github.com/fgrzl/json/polymorphic"
 )
@@ -206,6 +207,36 @@ func (b *Builder) structSchema(t reflect.Type, useRef bool) map[string]any {
 		}
 
 		refName := baseType.Name()
+
+		// If this is an anonymous embedded struct and the json tag contains "inline",
+		// merge its properties and required fields into the parent schema rather
+		// than emitting a nested property. This supports YAML-style `inline` usage
+		// while preserving the Go type definitions.
+		if field.Anonymous && baseKind == reflect.Struct {
+			jsonTag := field.Tag.Get(JSONTag)
+			if jsonTag != "" && strings.Contains(jsonTag, "inline") {
+				embedded := b.schemaInternal(baseType, false)
+				if props, ok := embedded[PropertiesKey].(map[string]any); ok {
+					for k, v := range props {
+						if _, exists := properties[k]; !exists {
+							properties[k] = v
+						}
+					}
+				}
+
+				// merge required
+				if reqv, ok := embedded[RequiredKey].([]string); ok {
+					required = append(required, reqv...)
+				} else if reqv2, ok := embedded[RequiredKey].([]any); ok {
+					for _, it := range reqv2 {
+						if s, ok := it.(string); ok {
+							required = append(required, s)
+						}
+					}
+				}
+				continue
+			}
+		}
 
 		// Generate component if eligible
 		if useRef && refName != "" && isEligibleForRef(baseType) {

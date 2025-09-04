@@ -1176,3 +1176,74 @@ func TestShouldHandleCircularReferences(t *testing.T) {
 	assert.Equal(t, expected, schema)
 	assert.Equal(t, expectedComponents, components)
 }
+
+func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
+	type Base struct {
+		CredentialID uuid.UUID `json:"credential_id" componentId:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
+		Tenant       string    `json:"tenant" title:"Tenant ID" description:"Azure tenant (directory) identifier used for authentication"`
+	}
+
+	type Sub struct {
+		Base  `json:",inline"`
+		Other string `json:"other"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"credential_id": map[string]any{
+				"type":        TypeString,
+				"format":      "uuid",
+				"componentId": "secret-picker",
+				"title":       "Secret",
+				"description": "UUID of the stored credential used to authenticate to the provider",
+			},
+			"tenant": map[string]any{
+				"type":        "string",
+				"title":       "Tenant ID",
+				"description": "Azure tenant (directory) identifier used for authentication",
+			},
+			"other": map[string]any{"type": "string"},
+		},
+	}
+
+	assertSchema(t, Sub{}, expected)
+}
+
+func TestShouldNotInlineAnonymousEmbeddedStructWhenNoInlineTag(t *testing.T) {
+	type Base struct {
+		CredentialID uuid.UUID `json:"credential_id" componentId:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
+		Tenant       string    `json:"tenant" title:"Tenant ID" description:"Azure tenant (directory) identifier used for authentication"`
+	}
+
+	type Sub struct {
+		Base
+		Other string `json:"other"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"Base": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"credential_id": map[string]any{
+						"type":        TypeString,
+						"format":      "uuid",
+						"componentId": "secret-picker",
+						"title":       "Secret",
+						"description": "UUID of the stored credential used to authenticate to the provider",
+					},
+					"tenant": map[string]any{
+						"type":        "string",
+						"title":       "Tenant ID",
+						"description": "Azure tenant (directory) identifier used for authentication",
+					},
+				},
+			},
+			"other": map[string]any{"type": "string"},
+		},
+	}
+
+	assertSchema(t, Sub{}, expected)
+}
