@@ -1,4 +1,5 @@
-[![ci](https://github.com/fgrzl/json/actions/workflows/ci.yml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/ci.yml)
+[![ci](https://github.com/fgrzl/json/actions/workflows/ci.yaml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/ci.yaml)
+[![ci](https://github.com/fgrzl/json/actions/workflows/pre-release.yaml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/pre-release.yaml)
 [![Dependabot Updates](https://github.com/fgrzl/json/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fgrzl/json/actions/workflows/dependabot/dependabot-updates)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=fgrzl_json&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=fgrzl_json)
 
@@ -10,18 +11,15 @@ This repository contains small, focused Go packages for common JSON tasks:
 - `jsonpatch` — compute and apply RFC 6902 JSON Patch operations.
 - `polymorphic` — register and marshal/unmarshal polymorphic types using a discriminator envelope.
 
-Quick start
------------
+## Quick start
 
 These short examples help someone new to the project get started quickly. For more advanced usage and examples, see `docs/jsonschema.md`, `docs/jsonpatch.md`, and `docs/polymorphic.md`.
 
-Prerequisites
--------------
+## Prerequisites
 
 Make sure you have a Go toolchain installed (Go 1.20+ recommended). Add the module to your project with the module path `github.com/fgrzl/json`.
 
-jsonschema — quick start
-------------------------
+## jsonschema — quick start
 
 Generate a simple schema for a Go struct:
 
@@ -44,8 +42,7 @@ func main() {
 
 See `docs/jsonschema.md` for advanced scenarios: components, self-referential types, nullable fields, and tags.
 
-jsonpatch — quick start
------------------------
+## jsonpatch — quick start
 
 Compute a patch and apply it:
 
@@ -74,8 +71,7 @@ func main() {
 
 See `docs/jsonpatch.md` for advanced scenarios: array heuristics, patch hydration, and performance tips.
 
-polymorphic — quick start
--------------------------
+## polymorphic — quick start
 
 Register a concrete type and (un)marshal via the envelope:
 
@@ -107,13 +103,11 @@ func main() {
 
 See `docs/polymorphic.md` for advanced scenarios: custom discriminators, registry management, and testing patterns.
 
-Contributing and docs
----------------------
+## Contributing and docs
 
 Add more guides under `docs/` using the naming convention `docs/my-doc.md` (all lower-case, hyphen-separated). Each package should keep a `docs/{package}.md` file with advanced examples and edge cases.
 
-Running tests
--------------
+## Running tests
 
 Run package tests locally:
 
