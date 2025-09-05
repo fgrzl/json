@@ -37,14 +37,24 @@ const (
 	TitleKey                = "title"
 	DescriptionKey          = "description"
 	DefaultKey              = "default"
+	ConstKey                = "const"
+	ExamplesKey             = "examples"
+	MinPropertiesKey        = "minProperties"
+	MaxPropertiesKey        = "maxProperties"
+	ExclusiveMinimumKey     = "exclusiveMinimum"
+	ExclusiveMaximumKey     = "exclusiveMaximum"
+	PatternPropertiesKey    = "patternProperties"
+	ContainsKey             = "contains"
+	IfKey                   = "if"
+	ThenKey                 = "then"
+	ElseKey                 = "else"
+	DefsKey                 = "$defs"
+	SchemaKey               = "$schema"
+	IDKey                   = "$id"
 	OneOfKey                = "oneOf"
 	AnyOfKey                = "anyOf"
 	AllOfKey                = "allOf"
 	NotKey                  = "not"
-	DataSourceKey           = "dataSource"
-	ComponentIDKey          = "componentId"
-	DependencyIDKey         = "dependencyId"
-	PositionKey             = "position"
 	JSONTag                 = "json"
 
 	// Schema types
@@ -145,14 +155,8 @@ func applyFieldTags(field reflect.StructField, schema map[string]any) {
 			}
 			s[EnumKey] = parts
 		}},
-		{DataSourceKey, func(v string, s map[string]any) { s[DataSourceKey] = v }},
-		{ComponentIDKey, func(v string, s map[string]any) { s[ComponentIDKey] = v }},
-		{DependencyIDKey, func(v string, s map[string]any) { s[DependencyIDKey] = v }},
-		{PositionKey, func(v string, s map[string]any) {
-			if n, err := strconv.Atoi(v); err == nil {
-				s[PositionKey] = n
-			}
-		}},
+		// Note: dataSource, componentId, dependencyId and position are now
+		// handled via x-* extension tags (for example `x-component:"id"`).
 		{TitleKey, func(v string, s map[string]any) { s[TitleKey] = v }},
 		{DescriptionKey, func(v string, s map[string]any) { s[DescriptionKey] = v }},
 		{DefaultKey, func(v string, s map[string]any) { s[DefaultKey] = v }},
@@ -195,6 +199,229 @@ func applyFieldTags(field reflect.StructField, schema map[string]any) {
 			tag.apply(val, schema)
 		}
 	}
+
+	// Apply custom extension tags: any struct tag key that starts with "x-"
+	// will be copied into the schema. We attempt multiple coercions:
+	//  - JSON decode if the value looks like an array or object
+	//  - integer parse
+	//  - boolean parse
+	// Otherwise the raw string is used.
+	for k, v := range parseStructTag(string(field.Tag)) {
+		if strings.HasPrefix(k, "x-") {
+			if _, exists := schema[k]; exists {
+				continue
+			}
+			trim := strings.TrimSpace(v)
+			if len(trim) > 0 && (trim[0] == '[' || trim[0] == '{') {
+				var anyVal any
+				if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+					schema[k] = anyVal
+					continue
+				}
+				// Fallback: support simple unquoted arrays like [a,b]
+				if trim[0] == '[' && strings.HasSuffix(trim, "]") {
+					inner := strings.TrimSpace(trim[1 : len(trim)-1])
+					if inner == "" {
+						schema[k] = []any{}
+						continue
+					}
+					parts := strings.Split(inner, ",")
+					arr := make([]any, 0, len(parts))
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						// strip optional surrounding quotes
+						if strings.HasPrefix(p, "\"") && strings.HasSuffix(p, "\"") && len(p) >= 2 {
+							unq, err := strconv.Unquote(p)
+							if err == nil {
+								arr = append(arr, unq)
+								continue
+							}
+							p = p[1 : len(p)-1]
+						}
+						arr = append(arr, p)
+					}
+					schema[k] = arr
+					continue
+				}
+			}
+			if n, err := strconv.Atoi(trim); err == nil {
+				schema[k] = n
+				continue
+			}
+			if b, err := strconv.ParseBool(trim); err == nil {
+				schema[k] = b
+				continue
+			}
+			schema[k] = v
+		}
+	}
+
+	// Support direct JSON Schema keyword tags (e.g. const, examples, $defs, $schema, $id)
+	for _, key := range []string{
+		ConstKey, ExamplesKey, MinPropertiesKey, MaxPropertiesKey,
+		ExclusiveMinimumKey, ExclusiveMaximumKey, PatternPropertiesKey,
+		ContainsKey, IfKey, ThenKey, ElseKey, DefsKey, SchemaKey, IDKey,
+	} {
+		if val := field.Tag.Get(key); val != "" {
+			trim := strings.TrimSpace(val)
+			switch key {
+			case MinPropertiesKey, MaxPropertiesKey:
+				if i, err := strconv.Atoi(trim); err == nil {
+					schema[key] = i
+				}
+			case ExclusiveMinimumKey, ExclusiveMaximumKey:
+				if f, err := strconv.ParseFloat(trim, 64); err == nil {
+					schema[key] = f
+				}
+			case ExamplesKey, PatternPropertiesKey, DefsKey:
+				if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[') {
+					var anyVal any
+					if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+						schema[key] = anyVal
+						break
+					}
+				}
+				schema[key] = val
+			case IfKey, ThenKey, ElseKey, ContainsKey:
+				if strings.HasPrefix(trim, "#") {
+					schema[key] = map[string]any{RefKey: trim}
+					break
+				}
+				if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[') {
+					var anyVal any
+					if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+						schema[key] = anyVal
+						break
+					}
+					// Fallback: support simple unquoted arrays like [a,b]
+					if trim[0] == '[' && strings.HasSuffix(trim, "]") {
+						inner := strings.TrimSpace(trim[1 : len(trim)-1])
+						if inner == "" {
+							schema[key] = []any{}
+							break
+						}
+						parts := strings.Split(inner, ",")
+						arr := make([]any, 0, len(parts))
+						for _, p := range parts {
+							p = strings.TrimSpace(p)
+							// strip optional surrounding quotes
+							if strings.HasPrefix(p, "\"") && strings.HasSuffix(p, "\"") && len(p) >= 2 {
+								unq, err := strconv.Unquote(p)
+								if err == nil {
+									arr = append(arr, unq)
+									continue
+								}
+								p = p[1 : len(p)-1]
+							}
+							// try numeric
+							if n, err := strconv.Atoi(p); err == nil {
+								arr = append(arr, n)
+								continue
+							}
+							if f, err := strconv.ParseFloat(p, 64); err == nil {
+								arr = append(arr, f)
+								continue
+							}
+							if b, err := strconv.ParseBool(p); err == nil {
+								arr = append(arr, b)
+								continue
+							}
+							arr = append(arr, p)
+						}
+						schema[key] = arr
+						break
+					}
+				}
+				schema[key] = val
+			default:
+				// const, $schema, $id: attempt numeric/bool/json coercion, fallback to string
+				if n, err := strconv.Atoi(trim); err == nil {
+					schema[key] = n
+					break
+				}
+				if f, err := strconv.ParseFloat(trim, 64); err == nil {
+					schema[key] = f
+					break
+				}
+				if b, err := strconv.ParseBool(trim); err == nil {
+					schema[key] = b
+					break
+				}
+				if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[' || trim[0] == '"') {
+					var anyVal any
+					if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+						schema[key] = anyVal
+						break
+					}
+				}
+				schema[key] = val
+			}
+		}
+	}
+}
+
+// parseStructTag parses a raw struct tag string into a map of key->value.
+// It is a lightweight parser that understands the `key:"value"` layout
+// used by reflect.StructTag. Returns an empty map on parse errors.
+func parseStructTag(raw string) map[string]string {
+	res := make(map[string]string)
+	i := 0
+	n := len(raw)
+	for i < n {
+		// skip spaces
+		for i < n && raw[i] == ' ' {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		// read key
+		j := i
+		for j < n && raw[j] != ':' && raw[j] != ' ' {
+			j++
+		}
+		if j >= n || raw[j] != ':' {
+			break
+		}
+		key := raw[i:j]
+		j++ // skip ':'
+		if j >= n || raw[j] != '"' {
+			break
+		}
+		// find end quote, handling escapes
+		k := j + 1
+		for k < n {
+			if raw[k] == '"' {
+				// check if escaped
+				esc := false
+				p := k - 1
+				for p >= j+1 && raw[p] == '\\' {
+					esc = !esc
+					p--
+				}
+				if !esc {
+					break
+				}
+			}
+			k++
+		}
+		if k >= n {
+			break
+		}
+		quoted := raw[j : k+1]
+		val, err := strconv.Unquote(quoted)
+		if err != nil {
+			// fallback: strip surrounding quotes
+			if len(quoted) >= 2 {
+				val = quoted[1 : len(quoted)-1]
+			} else {
+				val = quoted
+			}
+		}
+		res[key] = val
+		i = k + 1
+	}
+	return res
 }
 
 // addNumericTags applies numeric-specific tags to a schema.

@@ -437,10 +437,10 @@ func TestShouldApplyCustomTagsGivenFieldsWithCustomTags(t *testing.T) {
 	type TestStruct struct {
 		Field1 string `json:"field1" title:"Field Title" description:"Field Description"`
 		Field2 string `json:"field2" default:"default_value"`
-		Field3 string `json:"field3" dataSource:"api/endpoint"`
-		Field4 string `json:"field4" componentId:"comp123"`
-		Field5 string `json:"field5" dependencyId:"dep456"`
-		Field6 string `json:"field6" position:"5"`
+		Field3 string `json:"field3" x-dataSource:"api/endpoint"`
+		Field4 string `json:"field4" x-component-id:"comp123"`
+		Field5 string `json:"field5" x-dependencyId:"dep456"`
+		Field6 string `json:"field6" x-position:"5"`
 	}
 
 	// Act & Assert
@@ -457,23 +457,113 @@ func TestShouldApplyCustomTagsGivenFieldsWithCustomTags(t *testing.T) {
 				"default": "default_value",
 			},
 			"field3": map[string]any{
-				"type":       "string",
-				"dataSource": "api/endpoint",
+				"type":         "string",
+				"x-dataSource": "api/endpoint",
 			},
 			"field4": map[string]any{
-				"type":        "string",
-				"componentId": "comp123",
+				"type":           "string",
+				"x-component-id": "comp123",
 			},
 			"field5": map[string]any{
-				"type":         "string",
-				"dependencyId": "dep456",
+				"type":           "string",
+				"x-dependencyId": "dep456",
 			},
 			"field6": map[string]any{
-				"type":     "string",
-				"position": 5,
+				"type":       "string",
+				"x-position": 5,
 			},
 		},
 	})
+}
+
+func TestShouldApplyXExtensionString(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" x-custom-str:"hello"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":         "string",
+				"x-custom-str": "hello",
+			},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyXExtensionNumber(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" x-custom-num:"42"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":         "string",
+				"x-custom-num": 42,
+			},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyXExtensionArray(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" x-custom-arr:"[\"a\",\"b\"]"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":         "string",
+				"x-custom-arr": []any{"a", "b"},
+			},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyXExtensionNotEscapedArray(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" x-custom-arr:"[a,b]"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":         "string",
+				"x-custom-arr": []any{"a", "b"},
+			},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyXExtensionNotEscapedNumberArray(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" x-custom-arr:"[1,2]"`
+	}
+
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":         "string",
+				"x-custom-arr": []any{1.0, 2.0},
+			},
+		},
+	}
+
+	assertSchema(t, TestStruct{}, expected)
 }
 
 func TestShouldApplyAdditionalPropertiesWithRefGivenNonFalseValue(t *testing.T) {
@@ -1179,7 +1269,7 @@ func TestShouldHandleCircularReferences(t *testing.T) {
 
 func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
 	type Base struct {
-		CredentialID uuid.UUID `json:"credential_id" componentId:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
+		CredentialID uuid.UUID `json:"credential_id" x-component-id:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
 		Tenant       string    `json:"tenant" title:"Tenant ID" description:"Azure tenant (directory) identifier used for authentication"`
 	}
 
@@ -1192,11 +1282,11 @@ func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
 		"type": "object",
 		"properties": map[string]any{
 			"credential_id": map[string]any{
-				"type":        TypeString,
-				"format":      "uuid",
-				"componentId": "secret-picker",
-				"title":       "Secret",
-				"description": "UUID of the stored credential used to authenticate to the provider",
+				"type":           TypeString,
+				"format":         "uuid",
+				"x-component-id": "secret-picker",
+				"title":          "Secret",
+				"description":    "UUID of the stored credential used to authenticate to the provider",
 			},
 			"tenant": map[string]any{
 				"type":        "string",
@@ -1228,11 +1318,11 @@ func TestShouldNotInlineAnonymousEmbeddedStructWhenNoInlineTag(t *testing.T) {
 				"type": "object",
 				"properties": map[string]any{
 					"credential_id": map[string]any{
-						"type":        TypeString,
-						"format":      "uuid",
-						"componentId": "secret-picker",
-						"title":       "Secret",
-						"description": "UUID of the stored credential used to authenticate to the provider",
+						"type":           TypeString,
+						"format":         "uuid",
+						"x-component-id": "secret-picker",
+						"title":          "Secret",
+						"description":    "UUID of the stored credential used to authenticate to the provider",
 					},
 					"tenant": map[string]any{
 						"type":        "string",
@@ -1246,4 +1336,139 @@ func TestShouldNotInlineAnonymousEmbeddedStructWhenNoInlineTag(t *testing.T) {
 	}
 
 	assertSchema(t, Sub{}, expected)
+}
+
+// Tests for direct JSON Schema keyword struct tags
+func TestShouldApplyConstTag(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" contains:"#/components/schemas/Item"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":     "string",
+				"contains": map[string]any{"$ref": "#/components/schemas/Item"},
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyExamplesTag(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" examples:"[\"a\",\"b\"]"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":     "string",
+				"examples": []any{"a", "b"},
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyMinMaxPropertiesTag(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" minProperties:"1" maxProperties:"5"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":          "string",
+				"minProperties": 1,
+				"maxProperties": 5,
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyExclusiveMinMaxTag(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" exclusiveMinimum:"1.5" exclusiveMaximum:"10.25"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":             "string",
+				"exclusiveMinimum": 1.5,
+				"exclusiveMaximum": 10.25,
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyPatternPropertiesTag(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" patternProperties:"{\"^x-\\\\d+$\":{\"type\":\"string\"}}"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":              "string",
+				"patternProperties": map[string]any{"^x-\\d+$": map[string]any{"type": "string"}},
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyContainsTag(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" contains:"[#/components/schemas/Item]"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":     "string",
+				"contains": []any{"#/components/schemas/Item"},
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyIfThenElseTags(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" if:"{\"properties\":{\"type\":{\"const\":\"a\"}}}" then:"{\"required\":[\"other\"]}" else:"{\"required\":[\"alt\"]}"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type": "string",
+				"if":   map[string]any{"properties": map[string]any{"type": map[string]any{"const": "a"}}},
+				"then": map[string]any{"required": []any{"other"}},
+				"else": map[string]any{"required": []any{"alt"}},
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
+}
+
+func TestShouldApplyDefsSchemaIDTags(t *testing.T) {
+	type TestStruct struct {
+		Field string `json:"field" $defs:"{\"X\":{\"type\":\"string\"}}" $schema:"http://example.com/schema" $id:"http://example.com/id"`
+	}
+	expected := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{
+				"type":    "string",
+				"$defs":   map[string]any{"X": map[string]any{"type": "string"}},
+				"$schema": "http://example.com/schema",
+				"$id":     "http://example.com/id",
+			},
+		},
+	}
+	assertSchema(t, TestStruct{}, expected)
 }
