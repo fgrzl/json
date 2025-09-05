@@ -15,6 +15,14 @@ This repository contains small, focused Go packages for common JSON tasks:
 
 These short examples help someone new to the project get started quickly. For more advanced usage and examples, see `docs/jsonschema.md`, `docs/jsonpatch.md`, and `docs/polymorphic.md`.
 
+## Docs
+
+See the `docs/` directory for package-specific guides and advanced examples:
+
+- `docs/jsonschema.md` — advanced schema generation, tag-driven features such as `json:",inline"`, `x-*` extension tags, and direct JSON Schema keyword tags (`const`, `examples`, `$defs`, `$schema`, `$id`).
+- `docs/jsonpatch.md` — patch generation and application details.
+- `docs/polymorphic.md` — registry and polymorphic envelope patterns.
+
 ## Prerequisites
 
 Make sure you have a Go toolchain installed (Go 1.20+ recommended). Add the module to your project with the module path `github.com/fgrzl/json`.

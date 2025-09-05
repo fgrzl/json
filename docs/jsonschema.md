@@ -85,6 +85,31 @@ Supported tags include numeric bounds (`minimum`, `maximum`), string lengths
 (`minLength`, `maxLength`), regex `pattern`, array constraints (`minItems`,
 `uniqueItems`), and custom metadata keywords like `dataSource` and `componentId`.
 
+Inline embedded structs and x-* / direct schema keywords
+-------------------------------------------------------
+
+The generator supports several additional tag-driven behaviors:
+
+- Inline anonymous embedded structs: annotate an anonymous embedded struct
+  field with the JSON tag `json:",inline"` to merge its properties and
+  required entries into the parent schema rather than emitting a nested
+  property. This enables inlining shared core structs without changing the
+  Go types.
+
+- x-* extension tags: any struct tag whose key starts with `x-` will be copied
+  into the generated schema for that field. Values are coerced using this
+  priority: JSON decode (if the value starts with `{` or `[`), fallback
+  unquoted-array parsing for forms like `[a,b]`, integer parse, boolean parse,
+  otherwise taken as a raw string. Use JSON-escaped values when you need
+  precise typed arrays/objects.
+
+- Direct JSON Schema keyword tags: a small set of JSON Schema keywords may be
+  provided directly as struct tags, for example `const:"42"`,
+  `examples:"[\"a\",\"b\"]"`, `$defs:"{\"X\":{\"type\":\"string\"}}"`,
+  `$schema:"http://example.com/schema"` and `$id:"http://example.com/id"`.
+  These values are parsed with reasonable coercion (JSON decode, numeric
+  parsing for numeric-like values where applicable).
+
 6) json.RawMessage and additionalProperties
 
 The generator treats `json.RawMessage` as "raw JSON" by default. That means
