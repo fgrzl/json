@@ -1,7 +1,5 @@
-[![ci](https://github.com/fgrzl/json/actions/workflows/ci.yaml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/ci.yaml)
-[![ci](https://github.com/fgrzl/json/actions/workflows/pre-release.yaml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/pre-release.yaml)
+[![ci](https://github.com/fgrzl/json/actions/workflows/ci.yml/badge.svg)](https://github.com/fgrzl/json/actions/workflows/ci.yml)
 [![Dependabot Updates](https://github.com/fgrzl/json/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/fgrzl/json/actions/workflows/dependabot/dependabot-updates)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=fgrzl_json&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=fgrzl_json)
 
 # JSON
 
