@@ -1,21 +1,20 @@
-package polymorphic_test
+package polymorphic
 
 import (
 	"encoding/json"
 	"fmt"
 	"testing"
 
-	"github.com/fgrzl/json/polymorphic"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestShouldLoadFactoryGivenRegisteredType(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.Register(func() *Person { return &Person{} })
+	ClearRegistry()
+	Register(func() *Person { return &Person{} })
 
 	// Act
-	factory, err := polymorphic.LoadFactory("person")
+	factory, err := LoadFactory("person")
 
 	// Assert
 	assert.NoError(t, err, "Loading registered factory should not produce an error")
@@ -24,7 +23,7 @@ func TestShouldLoadFactoryGivenRegisteredType(t *testing.T) {
 
 func TestShouldReturnErrorWhenLoadingUnregisteredType(t *testing.T) {
 	// Act
-	factory, err := polymorphic.LoadFactory("UnknownType")
+	factory, err := LoadFactory("UnknownType")
 
 	// Assert
 	assert.Error(t, err, "Loading an unregistered type should return an error")
@@ -34,11 +33,11 @@ func TestShouldReturnErrorWhenLoadingUnregisteredType(t *testing.T) {
 
 func TestShouldCreateCorrectInstanceWhenFactoryInvoked(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.Register(func() *Person { return &Person{} })
+	ClearRegistry()
+	Register(func() *Person { return &Person{} })
 
 	// Act
-	factory, _ := polymorphic.LoadFactory("person")
+	factory, _ := LoadFactory("person")
 	instance := factory()
 
 	// Assert
@@ -48,12 +47,12 @@ func TestShouldCreateCorrectInstanceWhenFactoryInvoked(t *testing.T) {
 
 func TestShouldMarshalPolymorphicJSONGivenRegisteredType(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.Register(func() *Person { return &Person{} })
+	ClearRegistry()
+	Register(func() *Person { return &Person{} })
 	person := &Person{Name: "Alice", Age: 30}
 
 	// Act
-	jsonBytes, err := polymorphic.MarshalPolymorphicJSON(person)
+	jsonBytes, err := MarshalPolymorphicJSON(person)
 
 	// Assert
 	assert.NoError(t, err, "Marshaling should not produce an error")
@@ -63,11 +62,11 @@ func TestShouldMarshalPolymorphicJSONGivenRegisteredType(t *testing.T) {
 
 func TestShouldFailMarshalingWhenTypeUnregistered(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 	obj := &Person{Name: "Bob", Age: 40}
 
 	// Act
-	_, err := polymorphic.MarshalPolymorphicJSON(obj)
+	_, err := MarshalPolymorphicJSON(obj)
 
 	// Assert
 	assert.Error(t, err, "Marshaling should fail for an unregistered type")
@@ -76,12 +75,12 @@ func TestShouldFailMarshalingWhenTypeUnregistered(t *testing.T) {
 
 func TestShouldUnmarshalPolymorphicJSONGivenValidData(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.Register(func() *Person { return &Person{} })
+	ClearRegistry()
+	Register(func() *Person { return &Person{} })
 	jsonStr := `{"$type":"person","content":{"name":"Alice","age":30}}`
 
 	// Act
-	var envelope polymorphic.Envelope
+	var envelope Envelope
 	err := json.Unmarshal([]byte(jsonStr), &envelope)
 
 	// Assert
@@ -102,7 +101,7 @@ func TestUnmarshalShouldFailGivenUnknownType(t *testing.T) {
 	jsonStr := `{"$type":"UnknownType","content":{"key":"value"}}`
 
 	// Act
-	var content polymorphic.Envelope
+	var content Envelope
 	err := json.Unmarshal([]byte(jsonStr), &content)
 
 	// Assert
@@ -112,12 +111,12 @@ func TestUnmarshalShouldFailGivenUnknownType(t *testing.T) {
 
 func TestUnmarshalShouldFailGivenMissingContent(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.Register(func() *Person { return &Person{} })
+	ClearRegistry()
+	Register(func() *Person { return &Person{} })
 	jsonStr := `{"$type":"person"}`
 
 	// Act
-	var content polymorphic.Envelope
+	var content Envelope
 	err := json.Unmarshal([]byte(jsonStr), &content)
 
 	// Assert
@@ -127,24 +126,24 @@ func TestUnmarshalShouldFailGivenMissingContent(t *testing.T) {
 
 func TestShouldSupportMultiplePolymorphicTypes(t *testing.T) {
 	// Arrange: Define and register multiple types
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
-	polymorphic.Register(func() *Person { return &Person{} })
-	polymorphic.Register(func() *Car { return &Car{} })
+	Register(func() *Person { return &Person{} })
+	Register(func() *Car { return &Car{} })
 
 	person := &Person{Name: "Alice", Age: 30}
 	car := &Car{Make: "Tesla", Model: "Model S"}
 
 	// Act: Serialize both
-	personJSON, errPerson := polymorphic.MarshalPolymorphicJSON(person)
-	carJSON, errCar := polymorphic.MarshalPolymorphicJSON(car)
+	personJSON, errPerson := MarshalPolymorphicJSON(person)
+	carJSON, errCar := MarshalPolymorphicJSON(car)
 
 	// Assert: No errors
 	assert.NoError(t, errPerson, "Marshaling Person should not produce an error")
 	assert.NoError(t, errCar, "Marshaling Car should not produce an error")
 
 	// Act: Deserialize both
-	var personContent, carContent polymorphic.Envelope
+	var personContent, carContent Envelope
 	errPersonUnmarshal := json.Unmarshal(personJSON, &personContent)
 	errCarUnmarshal := json.Unmarshal(carJSON, &carContent)
 
@@ -171,13 +170,13 @@ func TestShouldSupportMultiplePolymorphicTypes(t *testing.T) {
 
 func TestRegisterTypeShouldProvideSimplifiedSyntax(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
 	// Act: Register using the simplified syntax
-	polymorphic.RegisterType[Person]()
+	RegisterType[Person]()
 
 	// Assert: Verify registration worked
-	factory, err := polymorphic.LoadFactory("person")
+	factory, err := LoadFactory("person")
 	assert.NoError(t, err, "Loading registered factory should not produce an error")
 	assert.NotNil(t, factory, "Loaded factory should not be nil")
 
@@ -190,11 +189,11 @@ func TestRegisterTypeShouldProvideSimplifiedSyntax(t *testing.T) {
 
 func TestShouldPanicGivenNonPolymorphicType(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
 	// Act & Assert
 	assert.Panics(t, func() {
-		polymorphic.RegisterType[NonPolymorphicType]()
+		RegisterType[NonPolymorphicType]()
 	}, "Should panic when registering a type that doesn't implement Polymorphic")
 }
 
@@ -202,16 +201,16 @@ func TestRegisterTypeShouldWorkEquivalentlyToRegister(t *testing.T) {
 	// Test that RegisterType[T]() produces the same result as Register(func() *T { return &T{} })
 
 	// Test with RegisterType
-	polymorphic.ClearRegistry()
-	polymorphic.RegisterType[Car]()
-	factory1, err1 := polymorphic.LoadFactory("car")
+	ClearRegistry()
+	RegisterType[Car]()
+	factory1, err1 := LoadFactory("car")
 	assert.NoError(t, err1)
 	instance1 := factory1()
 
 	// Test with Register
-	polymorphic.ClearRegistry()
-	polymorphic.Register(func() *Car { return &Car{} })
-	factory2, err2 := polymorphic.LoadFactory("car")
+	ClearRegistry()
+	Register(func() *Car { return &Car{} })
+	factory2, err2 := LoadFactory("car")
 	assert.NoError(t, err2)
 	instance2 := factory2()
 
@@ -225,14 +224,14 @@ func TestRegisterTypeShouldWorkEquivalentlyToRegister(t *testing.T) {
 
 func TestRegisterWithDiscriminatorShouldAllowDirectUsage(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 	customFactory := func() any { return &Person{Name: "Test", Age: 25} }
 
 	// Act
-	polymorphic.RegisterWithDiscriminator("custom-person", customFactory)
+	RegisterWithDiscriminator("custom-person", customFactory)
 
 	// Assert
-	factory, err := polymorphic.LoadFactory("custom-person")
+	factory, err := LoadFactory("custom-person")
 	assert.NoError(t, err, "Should load custom discriminator")
 
 	instance := factory()
@@ -244,17 +243,17 @@ func TestRegisterWithDiscriminatorShouldAllowDirectUsage(t *testing.T) {
 
 func TestShouldReturnErrorWhenCreatingInstanceOfUnregisteredType(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
 	// Test unregistered type
-	instance, err := polymorphic.CreateInstance("unregistered")
+	instance, err := CreateInstance("unregistered")
 	assert.Error(t, err, "Should error for unregistered type")
 	assert.Nil(t, instance, "Instance should be nil for unregistered type")
 	assert.ErrorContains(t, err, "type \"unregistered\" is not registered", "Error should mention unregistered type")
 
 	// Test invalid factory (register something that doesn't return Polymorphic)
-	polymorphic.RegisterWithDiscriminator("invalid", func() any { return "not polymorphic" })
-	instance, err = polymorphic.CreateInstance("invalid")
+	RegisterWithDiscriminator("invalid", func() any { return "not polymorphic" })
+	instance, err = CreateInstance("invalid")
 	assert.Error(t, err, "Should error for invalid instance type")
 	assert.Nil(t, instance, "Instance should be nil for invalid type")
 	assert.ErrorContains(t, err, "invalid instance type for \"invalid\"", "Error should mention invalid instance")
@@ -262,11 +261,11 @@ func TestShouldReturnErrorWhenCreatingInstanceOfUnregisteredType(t *testing.T) {
 
 func TestLoadFactoryShouldHandleErrorCases(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
 	// Test invalid factory type (this would be hard to trigger in practice, but for completeness)
 	// We'll just test the unregistered case since the invalid factory type case is difficult to create
-	factory, err := polymorphic.LoadFactory("nonexistent")
+	factory, err := LoadFactory("nonexistent")
 	assert.Error(t, err, "Should error for nonexistent type")
 	assert.Nil(t, factory, "Factory should be nil")
 	assert.ErrorContains(t, err, "type \"nonexistent\" is not registered", "Error should mention unregistered type")
@@ -274,37 +273,37 @@ func TestLoadFactoryShouldHandleErrorCases(t *testing.T) {
 
 func TestShouldRemoveAllTypesWhenRegistryCleared(t *testing.T) {
 	// Arrange: Register multiple types
-	polymorphic.ClearRegistry()
-	polymorphic.RegisterType[Person]()
-	polymorphic.RegisterType[Car]()
+	ClearRegistry()
+	RegisterType[Person]()
+	RegisterType[Car]()
 
 	// Verify they're registered
-	_, err1 := polymorphic.LoadFactory("person")
-	_, err2 := polymorphic.LoadFactory("car")
+	_, err1 := LoadFactory("person")
+	_, err2 := LoadFactory("car")
 	assert.NoError(t, err1, "Person should be registered")
 	assert.NoError(t, err2, "Car should be registered")
 
 	// Act: Clear registry
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
 	// Assert: Both should be gone
-	_, err1 = polymorphic.LoadFactory("person")
-	_, err2 = polymorphic.LoadFactory("car")
+	_, err1 = LoadFactory("person")
+	_, err2 = LoadFactory("car")
 	assert.Error(t, err1, "Person should be unregistered after clear")
 	assert.Error(t, err2, "Car should be unregistered after clear")
 }
 
 func TestRegisterShouldSupportCustomFactory(t *testing.T) {
 	// Test that Register works with custom factory functions
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
 	// Register with a factory that sets initial values
-	polymorphic.Register(func() *Person {
+	Register(func() *Person {
 		return &Person{Name: "Default", Age: 0}
 	})
 
 	// Test it works
-	instance, err := polymorphic.CreateInstance("person")
+	instance, err := CreateInstance("person")
 	assert.NoError(t, err)
 	person, ok := instance.(*Person)
 	assert.True(t, ok)
@@ -319,12 +318,12 @@ type NonPolymorphicType struct {
 
 func TestUnmarshalPolymorphicJSONShouldSucceed(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.RegisterType[Person]()
+	ClearRegistry()
+	RegisterType[Person]()
 	jsonStr := `{"$type":"person","content":{"name":"Alice","age":30}}`
 
 	// Act
-	envelope, err := polymorphic.UnmarshalPolymorphicJSON([]byte(jsonStr))
+	envelope, err := UnmarshalPolymorphicJSON([]byte(jsonStr))
 
 	// Assert
 	assert.NoError(t, err, "Unmarshaling should not produce an error")
@@ -342,7 +341,7 @@ func TestUnmarshalPolymorphicJSONShouldFailGivenInvalidJSON(t *testing.T) {
 	invalidJSON := `{"invalid json"`
 
 	// Act
-	envelope, err := polymorphic.UnmarshalPolymorphicJSON([]byte(invalidJSON))
+	envelope, err := UnmarshalPolymorphicJSON([]byte(invalidJSON))
 
 	// Assert
 	assert.Error(t, err, "Should error on invalid JSON")
@@ -355,7 +354,7 @@ func TestNewEnvelopeShouldCreateCorrectEnvelope(t *testing.T) {
 	person := &Person{Name: "Test", Age: 25}
 
 	// Act
-	envelope := polymorphic.NewEnvelope(person)
+	envelope := NewEnvelope(person)
 
 	// Assert
 	assert.NotNil(t, envelope, "Envelope should not be nil")
@@ -365,9 +364,9 @@ func TestNewEnvelopeShouldCreateCorrectEnvelope(t *testing.T) {
 
 func TestEnvelopeMarshalJSONShouldFailGivenUnregisteredType(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 	person := &Person{Name: "Test", Age: 25}
-	envelope := polymorphic.NewEnvelope(person)
+	envelope := NewEnvelope(person)
 
 	// Act
 	_, err := envelope.MarshalJSON()
@@ -379,11 +378,11 @@ func TestEnvelopeMarshalJSONShouldFailGivenUnregisteredType(t *testing.T) {
 
 func TestEnvelopeMarshalJSONShouldFailGivenInvalidContent(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.RegisterType[Person]()
+	ClearRegistry()
+	RegisterType[Person]()
 
 	// Create envelope with content that can't be marshaled
-	envelope := &polymorphic.Envelope{
+	envelope := &Envelope{
 		Discriminator: "person",
 		Content:       make(chan int), // channels can't be marshaled to JSON
 	}
@@ -399,7 +398,7 @@ func TestEnvelopeMarshalJSONShouldFailGivenInvalidContent(t *testing.T) {
 func TestEnvelopeUnmarshalJSONShouldFailGivenMissingTypeField(t *testing.T) {
 	// Arrange
 	jsonStr := `{"content":{"name":"Alice","age":30}}`
-	var envelope polymorphic.Envelope
+	var envelope Envelope
 
 	// Act
 	err := envelope.UnmarshalJSON([]byte(jsonStr))
@@ -412,7 +411,7 @@ func TestEnvelopeUnmarshalJSONShouldFailGivenMissingTypeField(t *testing.T) {
 func TestEnvelopeUnmarshalJSONShouldFailGivenInvalidTypeFormat(t *testing.T) {
 	// Arrange
 	jsonStr := `{"$type":123,"content":{"name":"Alice","age":30}}`
-	var envelope polymorphic.Envelope
+	var envelope Envelope
 
 	// Act
 	err := envelope.UnmarshalJSON([]byte(jsonStr))
@@ -424,10 +423,10 @@ func TestEnvelopeUnmarshalJSONShouldFailGivenInvalidTypeFormat(t *testing.T) {
 
 func TestEnvelopeUnmarshalJSONShouldFailGivenEmptyContent(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.RegisterType[Person]()
+	ClearRegistry()
+	RegisterType[Person]()
 	jsonStr := `{"$type":"person"}`
-	var envelope polymorphic.Envelope
+	var envelope Envelope
 
 	// Act
 	err := envelope.UnmarshalJSON([]byte(jsonStr))
@@ -439,10 +438,10 @@ func TestEnvelopeUnmarshalJSONShouldFailGivenEmptyContent(t *testing.T) {
 
 func TestEnvelopeUnmarshalJSONShouldFailGivenInvalidContentFormat(t *testing.T) {
 	// Arrange
-	polymorphic.ClearRegistry()
-	polymorphic.RegisterType[Person]()
+	ClearRegistry()
+	RegisterType[Person]()
 	jsonStr := `{"$type":"person","content":"invalid json for person"}`
-	var envelope polymorphic.Envelope
+	var envelope Envelope
 
 	// Act
 	err := envelope.UnmarshalJSON([]byte(jsonStr))
@@ -456,9 +455,9 @@ func TestLoadFactoryShouldFailGivenInvalidFactoryType(t *testing.T) {
 	// This test is challenging to create since we'd need to manually store an invalid factory
 	// The existing tests already cover the realistic error cases
 	// This test documents that the error case exists but is hard to trigger in practice
-	polymorphic.ClearRegistry()
+	ClearRegistry()
 
-	factory, err := polymorphic.LoadFactory("nonexistent")
+	factory, err := LoadFactory("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, factory)
 	assert.ErrorContains(t, err, "not registered")

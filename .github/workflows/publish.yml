@@ -1,4 +1,4 @@
-name: Pre-Release
+name: Publish
 
 on:
   workflow_dispatch:
@@ -8,8 +8,14 @@ permissions:
   packages: read
 
 jobs:
-  TagAndPublish:
-    name: Tag and Notify Go Proxy
+  build:
+    name: Build and Test
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  publish:
+    name: Publish and Notify Go Proxy
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
