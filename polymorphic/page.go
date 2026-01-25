@@ -1,17 +1,13 @@
 package polymorphic
 
-import (
-	"github.com/google/uuid"
-)
-
 func init() {
 	RegisterType[PolymorphicPage]()
 }
 
 type PolymorphicPage struct {
 	Envelopes []*Envelope `json:"envelopes,omitempty"`
-	Prev      *uuid.UUID  `json:"prev,omitempty"`
-	Next      *uuid.UUID  `json:"next,omitempty"`
+	Prev      string      `json:"prev,omitempty"`
+	Next      string      `json:"next,omitempty"`
 }
 
 func (obj *PolymorphicPage) GetDiscriminator() string {
@@ -19,9 +15,9 @@ func (obj *PolymorphicPage) GetDiscriminator() string {
 }
 
 type Page[T Polymorphic] struct {
-	Models []T        `json:"models,omitempty"`
-	Prev   *uuid.UUID `json:"prev,omitempty"`
-	Next   *uuid.UUID `json:"next,omitempty"`
+	Models []T    `json:"models,omitempty"`
+	Prev   string `json:"prev,omitempty"`
+	Next   string `json:"next,omitempty"`
 }
 
 func ToPage[T Polymorphic](obj *PolymorphicPage) *Page[T] {
