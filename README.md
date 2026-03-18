@@ -65,7 +65,10 @@ func main() {
   before := map[string]any{"a": 1, "b": 2}
   after := map[string]any{"a": 1, "b": 3, "c": 4}
 
-  patch := jsonpatch.GeneratePatch(before, after)
+  patch, err := jsonpatch.GeneratePatch(before, after, "")
+  if err != nil {
+    panic(err)
+  }
   updated, err := jsonpatch.ApplyPatch(before, patch)
   if err != nil {
     panic(err)
@@ -75,7 +78,7 @@ func main() {
 }
 ```
 
-See `docs/jsonpatch.md` for advanced scenarios: array heuristics, patch hydration, and performance tips.
+See `docs/jsonpatch.md` for advanced scenarios: array heuristics, patch hydration, and handling for values like `uuid.UUID` and `time.Time` that marshal differently from their internal Go representation.
 
 ## polymorphic — quick start
 

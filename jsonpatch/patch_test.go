@@ -2,9 +2,12 @@ package jsonpatch
 
 import (
 	"encoding/json"
+	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -377,6 +380,93 @@ func TestShouldApplyPatchAndHydrateStructCorrectly(t *testing.T) {
 	err = ApplyPatchAndHydrate(before, &result, patch)
 	require.NoError(t, err)
 	assert.Equal(t, after.Email, result.Email)
+}
+
+func TestShouldGenerateFieldLevelReplaceGivenUUIDFieldChange(t *testing.T) {
+	// Arrange
+	type Document struct {
+		ID uuid.UUID `json:"id"`
+	}
+
+	before := Document{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111")}
+	after := Document{ID: uuid.MustParse("22222222-2222-2222-2222-222222222222")}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, []Patch{{
+		Op:    "replace",
+		Path:  "/id",
+		Value: after.ID.String(),
+	}}, patch)
+}
+
+func TestShouldGenerateFieldLevelReplaceGivenTimeFieldChange(t *testing.T) {
+	// Arrange
+	type Document struct {
+		UpdatedAt time.Time `json:"updatedAt"`
+	}
+
+	before := Document{UpdatedAt: time.Date(2024, time.January, 15, 10, 30, 0, 0, time.UTC)}
+	after := Document{UpdatedAt: time.Date(2024, time.January, 16, 12, 45, 0, 0, time.UTC)}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, []Patch{{
+		Op:    "replace",
+		Path:  "/updatedAt",
+		Value: after.UpdatedAt.Format(time.RFC3339Nano),
+	}}, patch)
+}
+
+func TestShouldApplyPatchAndHydrateSpecialJSONTypesWithoutByteLevelPaths(t *testing.T) {
+	// Arrange
+	type Document struct {
+		ID        uuid.UUID       `json:"id"`
+		UpdatedAt time.Time       `json:"updatedAt"`
+		Addr      netip.Addr      `json:"addr"`
+		Payload   json.RawMessage `json:"payload"`
+	}
+
+	before := Document{
+		ID:        uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		UpdatedAt: time.Date(2024, time.January, 15, 10, 30, 0, 0, time.UTC),
+		Addr:      netip.MustParseAddr("192.0.2.10"),
+		Payload:   json.RawMessage(`{"enabled":false,"roles":["reader"]}`),
+	}
+	after := Document{
+		ID:        uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		UpdatedAt: time.Date(2024, time.January, 16, 12, 45, 0, 0, time.UTC),
+		Addr:      netip.MustParseAddr("192.0.2.20"),
+		Payload:   json.RawMessage(`{"enabled":true,"roles":["reader","writer"]}`),
+	}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+	require.NoError(t, err)
+
+	var result Document
+	err = ApplyPatchAndHydrate(before, &result, patch)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, after.ID, result.ID)
+	assert.True(t, result.UpdatedAt.Equal(after.UpdatedAt))
+	assert.Equal(t, after.Addr, result.Addr)
+	assert.JSONEq(t, string(after.Payload), string(result.Payload))
+
+	for _, operation := range patch {
+		assert.False(t, strings.HasPrefix(operation.Path, "/id/"), "uuid.UUID should not be diffed byte-by-byte")
+		assert.False(t, strings.HasPrefix(operation.Path, "/updatedAt/"), "time.Time should not be diffed as a nested struct")
+		assert.False(t, strings.HasPrefix(operation.Path, "/addr/"), "netip.Addr should not collapse into an internal representation")
+		assert.False(t, strings.HasPrefix(operation.Path, "/payload/0"), "json.RawMessage should not be diffed as raw bytes")
+	}
+	assert.NotEmpty(t, patch)
 }
 
 func TestGeneratePatchShouldRemoveNestedPropertiesCorrectly(t *testing.T) {
