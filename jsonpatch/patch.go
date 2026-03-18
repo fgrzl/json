@@ -1,6 +1,7 @@
 package jsonpatch
 
 import (
+	"encoding"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -206,12 +207,19 @@ func convertValue(data any) any {
 		return nil
 	}
 
+	if normalized, ok := normalizeSpecialValue(data); ok {
+		return normalized
+	}
+
 	v := reflect.ValueOf(data)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return nil
 		}
 		v = v.Elem()
+		if normalized, ok := normalizeSpecialValue(v.Interface()); ok {
+			return normalized
+		}
 	}
 
 	switch v.Kind() {
@@ -243,6 +251,27 @@ func convertValue(data any) any {
 	default:
 		return data
 	}
+}
+
+func normalizeSpecialValue(data any) (any, bool) {
+	if marshaler, ok := data.(json.Marshaler); ok {
+		encoded, err := marshaler.MarshalJSON()
+		if err == nil {
+			var normalized any
+			if err := json.Unmarshal(encoded, &normalized); err == nil {
+				return normalized, true
+			}
+		}
+	}
+
+	if marshaler, ok := data.(encoding.TextMarshaler); ok {
+		encoded, err := marshaler.MarshalText()
+		if err == nil {
+			return string(encoded), true
+		}
+	}
+
+	return nil, false
 }
 
 // toSlice converts an array/slice to []any using reflection.
