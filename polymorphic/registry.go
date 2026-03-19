@@ -19,8 +19,11 @@ var types sync.Map
 
 // RegisterWithDiscriminator stores a factory function under the given
 // discriminator. The factory should return a pointer to a zero-value
-// instance of the concrete type.
+// instance of the concrete type. It panics if discriminator is empty.
 func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
+	if discriminator == "" {
+		panic("discriminator must be non-empty")
+	}
 	types.Store(discriminator, factory)
 }
 

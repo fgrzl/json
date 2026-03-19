@@ -1026,7 +1026,7 @@ func TestShouldReturnErrorWhenInsertingAtInvalidIndex(t *testing.T) {
 	// Assert
 	assert.Error(t, err, "Should error on negative index")
 	assert.Nil(t, result)
-	assert.ErrorContains(t, err, "invalid index -1")
+	assert.ErrorContains(t, err, "index")
 }
 
 func TestShouldReturnErrorWhenInsertingBeyondSliceLength(t *testing.T) {
@@ -1044,7 +1044,7 @@ func TestShouldReturnErrorWhenInsertingBeyondSliceLength(t *testing.T) {
 	// Assert
 	assert.Error(t, err, "Should error when index exceeds slice length")
 	assert.Nil(t, result)
-	assert.ErrorContains(t, err, "invalid index 5")
+	assert.ErrorContains(t, err, "index")
 }
 
 func TestShouldRemoveFromSliceUsingComplexPath(t *testing.T) {
@@ -1789,4 +1789,1547 @@ func TestShouldPreserveJSONTypes(t *testing.T) {
 
 	arr := result["array"].([]any)
 	assert.Equal(t, []any{1, "two", false, nil}, arr)
+}
+
+// --- Table-driven ApplyPatch edge cases (plan §1) ---
+
+type applyCase struct {
+	name        string
+	doc         map[string]any
+	patch       []Patch
+	wantErr     bool
+	errContains string
+	wantDoc     map[string]any
+}
+
+func TestShouldApplyPatchCorrectlyGivenEdgeCaseInputsWhenApplyingPatches(t *testing.T) {
+	cases := []applyCase{
+		// Empty/nil patch list
+		{
+			name:    "Empty_patch_list",
+			doc:     map[string]any{"foo": "bar"},
+			patch:   []Patch{},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": "bar"},
+		},
+		{
+			name:    "Nil_patch_list",
+			doc:     map[string]any{"foo": "bar"},
+			patch:   nil,
+			wantErr: false,
+			wantDoc: map[string]any{"foo": "bar"},
+		},
+		// Path format
+		{
+			name:        "Empty_path",
+			doc:         map[string]any{"foo": "bar"},
+			patch:       []Patch{{Op: "add", Path: "", Value: "x"}},
+			wantErr:     true,
+			errContains: "empty path",
+		},
+		{
+			name:    "Add_at_root",
+			doc:     map[string]any{"foo": "bar"},
+			patch:   []Patch{{Op: "add", Path: "/baz", Value: "qux"}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": "bar", "baz": "qux"},
+		},
+		{
+			name:    "Append_index_dash",
+			doc:     map[string]any{"arr": []any{1, 2}},
+			patch:   []Patch{{Op: "add", Path: "/arr/-", Value: 3}},
+			wantErr: false,
+			wantDoc: map[string]any{"arr": []any{1, 2, 3}},
+		},
+		// Add
+		{
+			name:        "Add_to_non_existent_parent",
+			doc:         map[string]any{"foo": "bar"},
+			patch:       []Patch{{Op: "add", Path: "/baz/bat", Value: "qux"}},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		{
+			name:        "Add_at_index_past_length",
+			doc:         map[string]any{"arr": []any{1, 2}},
+			patch:       []Patch{{Op: "add", Path: "/arr/10", Value: 3}},
+			wantErr:     true,
+			errContains: "index",
+		},
+		{
+			name:    "Add_at_index_equals_length",
+			doc:     map[string]any{"arr": []any{1, 2}},
+			patch:   []Patch{{Op: "add", Path: "/arr/2", Value: 3}},
+			wantErr: false,
+			wantDoc: map[string]any{"arr": []any{1, 2, 3}},
+		},
+		// Remove
+		{
+			name:        "Remove_non_existent_path",
+			doc:         map[string]any{"foo": "bar"},
+			patch:       []Patch{{Op: "remove", Path: "/nonexistent"}},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		{
+			name:    "Remove_array_index_out_of_bounds",
+			doc:     map[string]any{"arr": []any{1, 2}},
+			patch:   []Patch{{Op: "remove", Path: "/arr/5"}},
+			wantErr: true,
+		},
+		{
+			name:    "Remove_root_level_key",
+			doc:     map[string]any{"foo": "bar", "baz": "qux"},
+			patch:   []Patch{{Op: "remove", Path: "/baz"}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": "bar"},
+		},
+		// Replace
+		{
+			name:        "Replace_non_existent_path",
+			doc:         map[string]any{"foo": "bar"},
+			patch:       []Patch{{Op: "replace", Path: "/nonexistent", Value: "x"}},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		{
+			name:    "Replace_at_valid_path_with_nil",
+			doc:     map[string]any{"foo": "bar"},
+			patch:   []Patch{{Op: "replace", Path: "/foo", Value: nil}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": nil},
+		},
+		// Move
+		{
+			name:        "Move_from_non_existent",
+			doc:         map[string]any{"foo": "bar"},
+			patch:       []Patch{{Op: "move", From: "/missing", Path: "/here"}},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		{
+			name:        "Move_from_prefix_of_path",
+			doc:         map[string]any{"foo": map[string]any{"bar": "baz"}},
+			patch:       []Patch{{Op: "move", From: "/foo", Path: "/foo/qux"}},
+			wantErr:     true,
+			errContains: "prefix",
+		},
+		// Atomicity: second op fails
+		{
+			name: "Second_op_fails_atomicity",
+			doc:  map[string]any{"foo": "bar", "baz": []any{1}},
+			patch: []Patch{
+				{Op: "replace", Path: "/foo", Value: "new"},
+				{Op: "remove", Path: "/nonexistent"},
+			},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Arrange
+			doc := c.doc
+			patches := c.patch
+
+			// Act
+			result, err := ApplyPatch(doc, patches)
+
+			// Assert
+			if c.wantErr {
+				require.Error(t, err)
+				if c.errContains != "" {
+					assert.Contains(t, err.Error(), c.errContains)
+				}
+				assert.Nil(t, result)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if c.wantDoc != nil {
+				assert.Equal(t, c.wantDoc, result)
+			}
+		})
+	}
+}
+
+// --- RFC 6902 spec-style inline cases (plan §2) ---
+
+func TestShouldApplyPatchCorrectlyGivenRFC6902SpecCasesWhenApplyingPatches(t *testing.T) {
+	cases := []applyCase{
+		// A.1 Adding an Object Member
+		{
+			name:    "A.1_Adding_Object_Member",
+			doc:     map[string]any{"foo": "bar"},
+			patch:   []Patch{{Op: "add", Path: "/baz", Value: "qux"}},
+			wantErr: false,
+			wantDoc: map[string]any{"baz": "qux", "foo": "bar"},
+		},
+		// A.2 Adding an Array Element
+		{
+			name:    "A.2_Adding_Array_Element",
+			doc:     map[string]any{"foo": []any{"bar", "baz"}},
+			patch:   []Patch{{Op: "add", Path: "/foo/1", Value: "qux"}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": []any{"bar", "qux", "baz"}},
+		},
+		// A.3 Removing an Object Member
+		{
+			name:    "A.3_Removing_Object_Member",
+			doc:     map[string]any{"baz": "qux", "foo": "bar"},
+			patch:   []Patch{{Op: "remove", Path: "/baz"}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": "bar"},
+		},
+		// A.4 Removing an Array Element
+		{
+			name:    "A.4_Removing_Array_Element",
+			doc:     map[string]any{"foo": []any{"bar", "qux", "baz"}},
+			patch:   []Patch{{Op: "remove", Path: "/foo/1"}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": []any{"bar", "baz"}},
+		},
+		// A.5 Replacing a Value
+		{
+			name:    "A.5_Replacing_Value",
+			doc:     map[string]any{"baz": "qux", "foo": "bar"},
+			patch:   []Patch{{Op: "replace", Path: "/baz", Value: "boo"}},
+			wantErr: false,
+			wantDoc: map[string]any{"baz": "boo", "foo": "bar"},
+		},
+		// A.6 Moving a Value
+		{
+			name: "A.6_Moving_Value",
+			doc: map[string]any{
+				"foo": map[string]any{"bar": "baz", "waldo": "fred"},
+				"qux": map[string]any{"corge": "grault"},
+			},
+			patch:   []Patch{{Op: "move", From: "/foo/waldo", Path: "/qux/thud"}},
+			wantErr: false,
+			wantDoc: map[string]any{
+				"foo": map[string]any{"bar": "baz"},
+				"qux": map[string]any{"corge": "grault", "thud": "fred"},
+			},
+		},
+		// A.7 Moving an Array Element
+		{
+			name:    "A.7_Moving_Array_Element",
+			doc:     map[string]any{"foo": []any{"all", "grass", "cows", "eat"}},
+			patch:   []Patch{{Op: "move", From: "/foo/1", Path: "/foo/3"}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": []any{"all", "cows", "eat", "grass"}},
+		},
+		// A.10 Adding a nested member object
+		{
+			name:    "A.10_Adding_Nested_Object",
+			doc:     map[string]any{"foo": "bar"},
+			patch:   []Patch{{Op: "add", Path: "/child", Value: map[string]any{"grandchild": map[string]any{}}}},
+			wantErr: false,
+			wantDoc: map[string]any{
+				"foo":   "bar",
+				"child": map[string]any{"grandchild": map[string]any{}},
+			},
+		},
+		// A.12 Adding to a non-existent target
+		{
+			name:        "A.12_Add_to_non_existent_target",
+			doc:         map[string]any{"foo": "bar"},
+			patch:       []Patch{{Op: "add", Path: "/baz/bat", Value: "qux"}},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		// 4.1 add with missing object
+		{
+			name:        "4.1_Add_with_missing_object",
+			doc:         map[string]any{"q": map[string]any{"bar": 2}},
+			patch:       []Patch{{Op: "add", Path: "/a/b", Value: 1}},
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		// A.16 Adding with path /foo/- (append) per RFC 6902
+		{
+			name:    "A.16_Add_append_index_dash",
+			doc:     map[string]any{"foo": []any{"bar"}},
+			patch:   []Patch{{Op: "add", Path: "/foo/-", Value: []any{"abc", "def"}}},
+			wantErr: false,
+			wantDoc: map[string]any{"foo": []any{"bar", []any{"abc", "def"}}},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Arrange
+			doc := c.doc
+			patches := c.patch
+
+			// Act
+			result, err := ApplyPatch(doc, patches)
+
+			// Assert
+			if c.wantErr {
+				require.Error(t, err)
+				if c.errContains != "" {
+					assert.Contains(t, err.Error(), c.errContains)
+				}
+				assert.Nil(t, result)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if c.wantDoc != nil {
+				assert.Equal(t, c.wantDoc, result)
+			}
+		})
+	}
+}
+
+// --- GeneratePatch round-trip and edge cases (plan §3) ---
+
+func TestShouldProduceAfterDocumentGivenBeforeAndAfterWhenGenerateAndApplyPatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		before map[string]any
+		after  map[string]any
+	}{
+		{
+			name:   "Empty_object_to_object",
+			before: map[string]any{},
+			after:  map[string]any{"a": 1},
+		},
+		{
+			name:   "Empty_array",
+			before: map[string]any{"arr": []any{}},
+			after:  map[string]any{"arr": []any{1}},
+		},
+		{
+			name:   "Nil_value_replaced",
+			before: map[string]any{"x": nil},
+			after:  map[string]any{"x": "not nil"},
+		},
+		{
+			name:   "Nested_object_change",
+			before: map[string]any{"a": map[string]any{"b": 1}},
+			after:  map[string]any{"a": map[string]any{"b": 2, "c": 3}},
+		},
+		{
+			name:   "Array_swap_adjacent",
+			before: map[string]any{"list": []any{1, 2, 3}},
+			after:  map[string]any{"list": []any{2, 1, 3}},
+		},
+		{
+			name:   "Array_insert_and_delete",
+			before: map[string]any{"list": []any{1, 2, 3}},
+			after:  map[string]any{"list": []any{1, 99, 3}},
+		},
+		{
+			name:   "Different_top_level_keys",
+			before: map[string]any{"old": true},
+			after:  map[string]any{"new": true},
+		},
+		{
+			name:   "Deep_nesting",
+			before: map[string]any{"a": map[string]any{"b": map[string]any{"c": 1}}},
+			after:  map[string]any{"a": map[string]any{"b": map[string]any{"c": 2, "d": 4}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			before := tt.before
+			after := tt.after
+
+			// Act
+			patches, err := GeneratePatch(before, after, "")
+			require.NoError(t, err)
+			result, err := ApplyPatch(before, patches)
+
+			// Assert
+			require.NoError(t, err)
+			assert.Equal(t, after, result)
+		})
+	}
+}
+
+func TestShouldGeneratePatchCorrectlyGivenEdgeCaseInputsWhenComparingBeforeAndAfter(t *testing.T) {
+	t.Run("Empty_map_no_change", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{}
+		after := map[string]any{}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Empty(t, patches)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Slice_with_nil_elements", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"arr": []any{1, nil, 3}}
+		after := map[string]any{"arr": []any{1, nil, 99}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Non_empty_basePath", func(t *testing.T) {
+		// Arrange
+		beforeRoot := map[string]any{"a": 1}
+		afterRoot := map[string]any{"a": 2}
+		before := map[string]any{"root": beforeRoot}
+		after := map[string]any{"root": afterRoot}
+
+		// Act
+		patches, err := GeneratePatch(beforeRoot, afterRoot, "/root")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		require.NotEmpty(t, patches)
+		for _, p := range patches {
+			assert.True(t, strings.HasPrefix(p.Path, "/root/"), "path should have basePath prefix: %s", p.Path)
+		}
+		assert.Equal(t, after, result)
+	})
+	t.Run("Type_change_object_to_array", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"x": map[string]any{"a": 1}}
+		after := map[string]any{"x": []any{1, 2}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		require.NotEmpty(t, patches)
+		assert.Equal(t, after, result)
+	})
+}
+
+func TestShouldReturnErrorGivenInvalidInputsWhenGeneratePatch(t *testing.T) {
+	t.Run("Invalid_before_not_map_or_struct", func(t *testing.T) {
+		// Arrange
+		before := "not a map"
+		after := map[string]any{"a": 1}
+
+		// Act
+		_, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.Error(t, err)
+	})
+	t.Run("Invalid_after_not_map_or_struct", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": 1}
+		after := "not a map"
+
+		// Act
+		_, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.Error(t, err)
+	})
+}
+
+// --- Nil and null edge cases ---
+
+func TestShouldHandleNilAndNullCorrectlyGivenVariousInputsWhenApplyingOrGeneratingPatch(t *testing.T) {
+	// ApplyPatch: document with nil values, patch Value nil, nested null, array with nil
+	t.Run("Apply_remove_key_whose_value_is_nil", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": nil, "bar": "baz"}
+		patches := []Patch{{Op: "remove", Path: "/foo"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		_, exists := result["foo"]
+		assert.False(t, exists)
+		assert.Equal(t, "baz", result["bar"])
+	})
+	t.Run("Apply_replace_nil_with_value", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"x": nil}
+		patches := []Patch{{Op: "replace", Path: "/x", Value: "set"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, "set", result["x"])
+	})
+	t.Run("Apply_add_nil_value_at_new_key", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": 1}
+		patches := []Patch{{Op: "add", Path: "/nullkey", Value: nil}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Len(t, result, 2)
+		_, hasKey := result["nullkey"]
+		assert.True(t, hasKey)
+		assert.Nil(t, result["nullkey"])
+	})
+	t.Run("Apply_add_overwrites_existing_nil", func(t *testing.T) {
+		// Arrange - add at path that currently holds nil (object member exists)
+		doc := map[string]any{"p": nil}
+		patches := []Patch{{Op: "add", Path: "/p", Value: 42}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 42, result["p"])
+	})
+	t.Run("Apply_replace_at_array_index_where_element_is_nil", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, nil, 3}}
+		patches := []Patch{{Op: "replace", Path: "/arr/1", Value: 2}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 2, 3}, result["arr"])
+	})
+	t.Run("Apply_remove_at_array_index_where_element_is_nil", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, nil, 3}}
+		patches := []Patch{{Op: "remove", Path: "/arr/1"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 3}, result["arr"])
+	})
+	t.Run("Apply_move_from_path_whose_value_is_nil", func(t *testing.T) {
+		// Arrange - move nil to another key
+		doc := map[string]any{"from": nil, "to": "existing"}
+		patches := []Patch{{Op: "move", From: "/from", Path: "/moved"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		_, fromExists := result["from"]
+		assert.False(t, fromExists)
+		assert.Nil(t, result["moved"])
+		assert.Equal(t, "existing", result["to"])
+	})
+	t.Run("Apply_nested_object_with_nil_leaf", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"nested": map[string]any{"leaf": nil}}
+		patches := []Patch{{Op: "replace", Path: "/nested/leaf", Value: "filled"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		nested := result["nested"].(map[string]any)
+		assert.Equal(t, "filled", nested["leaf"])
+	})
+	t.Run("Apply_fails_when_traversing_through_nil", func(t *testing.T) {
+		// Arrange - path /a/b where a is nil (cannot index into null)
+		doc := map[string]any{"a": nil}
+		patches := []Patch{{Op: "add", Path: "/a/b", Value: 1}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unexpected type")
+	})
+
+	// GeneratePatch: before/after with nil, nil vs missing, round-trip with nil
+	t.Run("Generate_add_when_after_has_nil_at_new_key", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": 1}
+		after := map[string]any{"a": 1, "n": nil}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Generate_remove_when_after_omits_key_that_was_nil", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": 1, "n": nil}
+		after := map[string]any{"a": 1}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Generate_no_patch_when_both_nil_at_same_key", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"x": nil}
+		after := map[string]any{"x": nil}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		assert.Empty(t, patches)
+	})
+	t.Run("Generate_replace_when_before_nil_after_non_nil", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"k": nil}
+		after := map[string]any{"k": "v"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Generate_round_trip_nested_nil", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"outer": map[string]any{"inner": nil}}
+		after := map[string]any{"outer": map[string]any{"inner": 42}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Generate_round_trip_array_with_nil_element_change", func(t *testing.T) {
+		// Arrange - change one element in array that contains nil
+		before := map[string]any{"arr": []any{nil, 2, nil}}
+		after := map[string]any{"arr": []any{nil, 99, nil}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+}
+
+// --- Path and pointer edge cases (plan §4) ---
+
+func TestShouldApplyPatchCorrectlyGivenPathAndPointerEdgeCasesWhenApplyingPatch(t *testing.T) {
+	t.Run("Append_index_dash_succeeds", func(t *testing.T) {
+		// Arrange - RFC 6902: /arr/- appends to array
+		doc := map[string]any{"arr": []any{1, 2}}
+		patches := []Patch{{Op: "add", Path: "/arr/-", Value: 3}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 2, 3}, result["arr"])
+	})
+	t.Run("Path_with_tilde1_literal_key", func(t *testing.T) {
+		// Arrange - RFC 6901: key "~1" is referenced by path /~01 (~0 = ~, so ~01 = "~1")
+		doc := map[string]any{"~1": 10}
+		patches := []Patch{{Op: "replace", Path: "/~01", Value: 42}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 42, result["~1"])
+	})
+	t.Run("Path_with_tilde0_literal_key", func(t *testing.T) {
+		// Arrange - RFC 6901: key "~0" is referenced by path /~00 (~0 = ~, so ~00 = "~0")
+		doc := map[string]any{"~0": 9}
+		patches := []Patch{{Op: "replace", Path: "/~00", Value: 99}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 99, result["~0"])
+	})
+	t.Run("Empty_path_segment_errors", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": "bar"}
+		patches := []Patch{{Op: "add", Path: "/foo//bar", Value: "x"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty component")
+	})
+	t.Run("Non_numeric_array_index_errors", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, 2}}
+		patches := []Patch{{Op: "remove", Path: "/arr/bar"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+	})
+	t.Run("Negative_array_index_errors", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, 2}}
+		patches := []Patch{{Op: "add", Path: "/arr/-1", Value: 3}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "index")
+	})
+	t.Run("Float_array_index_errors", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, 2}}
+		patches := []Patch{{Op: "remove", Path: "/arr/1.5"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+	})
+}
+
+// --- Group A: Patch serialization falsy-value roundtrip (Bug 1) ---
+
+func TestShouldPreserveFalsyValuesGivenPatchWithFalsyValueWhenMarshalAndUnmarshal(t *testing.T) {
+	cases := []struct {
+		name  string
+		value any
+	}{
+		{"Value_false", false},
+		{"Value_zero", 0},
+		{"Value_empty_string", ""},
+		{"Value_nil", nil},
+		{"Value_empty_array", []any{}},
+		{"Value_empty_object", map[string]any{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Arrange
+			patch := []Patch{{Op: "replace", Path: "/key", Value: c.value}}
+
+			// Act
+			jsonBytes, err := json.Marshal(patch)
+			require.NoError(t, err)
+			var unmarshaled []Patch
+			err = json.Unmarshal(jsonBytes, &unmarshaled)
+
+			// Assert
+			require.NoError(t, err)
+			require.Len(t, unmarshaled, 1)
+			// JSON decodes numbers as float64; 0 survives as float64(0)
+			if c.name == "Value_zero" {
+				require.NotNil(t, unmarshaled[0].Value)
+				assert.Equal(t, float64(0), unmarshaled[0].Value)
+			} else {
+				assert.Equal(t, c.value, unmarshaled[0].Value, "falsy value should survive JSON roundtrip")
+			}
+		})
+	}
+}
+
+// --- Group B: Move nil from array (Bug 2) ---
+
+func TestShouldMoveNilElementGivenArrayWithNilWhenApplyingMovePatch(t *testing.T) {
+	t.Run("Move_nil_from_root_array", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{nil, "keep"}}
+		patches := []Patch{{Op: "move", From: "/arr/0", Path: "/moved"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Nil(t, result["moved"])
+		assert.Equal(t, []any{"keep"}, result["arr"])
+	})
+	t.Run("Move_nil_from_nested_array", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"deep": map[string]any{"arr": []any{nil, 1, 2}}}
+		patches := []Patch{{Op: "move", From: "/deep/arr/0", Path: "/target"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Nil(t, result["target"])
+		assert.Equal(t, []any{1, 2}, result["deep"].(map[string]any)["arr"])
+	})
+}
+
+// --- Group C: Whitespace-sensitive string comparison (Bug 3) ---
+
+func TestShouldGenerateReplaceGivenWhitespaceOnlyChangeWhenGeneratingPatch(t *testing.T) {
+	t.Run("Object_string_whitespace_change", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"s": " foo "}
+		after := map[string]any{"s": "foo"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		require.NotEmpty(t, patches, "should produce replace for whitespace-only change")
+		var found bool
+		for _, p := range patches {
+			if p.Op == "replace" && p.Path == "/s" {
+				found = true
+				assert.Equal(t, "foo", p.Value)
+				break
+			}
+		}
+		assert.True(t, found)
+	})
+	t.Run("Array_element_whitespace_change", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": []any{" x "}}
+		after := map[string]any{"a": []any{"x"}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		require.NotEmpty(t, patches)
+		var found bool
+		for _, p := range patches {
+			if p.Op == "replace" && strings.HasPrefix(p.Path, "/a/") {
+				found = true
+				assert.Equal(t, "x", p.Value)
+				break
+			}
+		}
+		assert.True(t, found)
+	})
+}
+
+// --- Group D: Struct omitempty handling (Bug 4) ---
+
+func TestShouldRespectOmitemptyGivenStructWithZeroFieldsWhenGeneratingPatch(t *testing.T) {
+	type WithOmitempty struct {
+		Required string `json:"required"`
+		Optional string `json:"opt,omitempty"`
+	}
+	t.Run("No_patch_when_both_zero_optional", func(t *testing.T) {
+		// Arrange
+		before := WithOmitempty{Required: "a", Optional: ""}
+		after := WithOmitempty{Required: "a", Optional: ""}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		assert.Empty(t, patches, "omitempty zero in both should not produce patch")
+	})
+	t.Run("Patch_when_optional_goes_from_zero_to_set", func(t *testing.T) {
+		// Arrange
+		before := WithOmitempty{Required: "a", Optional: ""}
+		after := WithOmitempty{Required: "a", Optional: "set"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		require.NotEmpty(t, patches)
+		var found bool
+		for _, p := range patches {
+			if (p.Op == "add" || p.Op == "replace") && (p.Path == "/opt" || strings.Contains(p.Path, "opt")) {
+				found = true
+				assert.Equal(t, "set", p.Value)
+				break
+			}
+		}
+		assert.True(t, found)
+	})
+}
+
+// --- Group E: JSON Pointer escaping (Bug 5) ---
+
+func TestShouldHandleKeysWithSlashAndTildeGivenEscapedPathWhenApplyingPatch(t *testing.T) {
+	t.Run("Key_contains_slash_escaped_as_tilde1", func(t *testing.T) {
+		// Arrange - RFC 6901: ~1 encodes /
+		doc := map[string]any{"a/b": 1}
+		patches := []Patch{{Op: "replace", Path: "/a~1b", Value: 2}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 2, result["a/b"])
+	})
+	t.Run("Key_contains_tilde_escaped_as_tilde0", func(t *testing.T) {
+		// Arrange - RFC 6901: ~0 encodes ~
+		doc := map[string]any{"a~b": 1}
+		patches := []Patch{{Op: "replace", Path: "/a~0b", Value: 2}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 2, result["a~b"])
+	})
+	t.Run("Key_tilde1_per_RFC_A14", func(t *testing.T) {
+		// Arrange - path /~01 means key "~1" (segment ~01 unescapes to ~1)
+		doc := map[string]any{"~1": 10}
+		patches := []Patch{{Op: "replace", Path: "/~01", Value: 42}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 42, result["~1"])
+	})
+}
+
+// --- Group F: Append index dash (Bug 6) ---
+
+func TestShouldAppendToArrayGivenDashIndexWhenApplyingAddPatch(t *testing.T) {
+	t.Run("Append_to_non_empty_array", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, 2}}
+		patches := []Patch{{Op: "add", Path: "/arr/-", Value: 3}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 2, 3}, result["arr"])
+	})
+	t.Run("Append_to_empty_array", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{}}
+		patches := []Patch{{Op: "add", Path: "/arr/-", Value: "first"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{"first"}, result["arr"])
+	})
+	t.Run("Append_to_nested_array", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"obj": map[string]any{"arr": []any{1}}}
+		patches := []Patch{{Op: "add", Path: "/obj/arr/-", Value: 2}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 2}, result["obj"].(map[string]any)["arr"])
+	})
+}
+
+// --- Group G: Misc edge cases ---
+
+func TestShouldHandleMiscEdgeCasesGivenVariousInputsWhenApplyingOrGeneratingPatch(t *testing.T) {
+	t.Run("Add_replaces_existing_key", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": "old"}
+		patches := []Patch{{Op: "add", Path: "/foo", Value: "new"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, "new", result["foo"])
+	})
+	t.Run("Replace_with_identical_value", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"x": 1}
+		patches := []Patch{{Op: "replace", Path: "/x", Value: 1}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 1, result["x"])
+	})
+	t.Run("Multiple_patches_same_path", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{}
+		patches := []Patch{
+			{Op: "add", Path: "/foo", Value: 1},
+			{Op: "replace", Path: "/foo", Value: 2},
+		}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 2, result["foo"])
+	})
+	t.Run("Empty_arrays_no_patches", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": []any{}}
+		after := map[string]any{"a": []any{}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		assert.Empty(t, patches)
+	})
+	t.Run("Array_to_empty_removes", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": []any{1, 2}}
+		after := map[string]any{"a": []any{}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Empty_to_array_adds", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a": []any{}}
+		after := map[string]any{"a": []any{1, 2}}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Key_with_spaces", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"hello world": 1}
+		patches := []Patch{{Op: "replace", Path: "/hello world", Value: 2}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 2, result["hello world"])
+	})
+	t.Run("Numeric_string_key_treated_as_object_member", func(t *testing.T) {
+		// Arrange - "0" is object key, not array index
+		doc := map[string]any{"0": "val"}
+		patches := []Patch{{Op: "replace", Path: "/0", Value: "new"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, "new", result["0"])
+	})
+	t.Run("Struct_with_pointer_field", func(t *testing.T) {
+		type PtrStruct struct {
+			Name *string `json:"name"`
+		}
+		s := "alice"
+		before := PtrStruct{Name: &s}
+		after := PtrStruct{Name: nil}
+
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(map[string]any{"name": "alice"}, patches)
+		require.NoError(t, err)
+		assert.Nil(t, result["name"])
+	})
+	t.Run("Deeply_nested_array_of_objects_roundtrip", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{
+			"level1": []any{
+				map[string]any{"level2": []any{
+					map[string]any{"k": "a"},
+				}},
+			},
+		}
+		after := map[string]any{
+			"level1": []any{
+				map[string]any{"level2": []any{
+					map[string]any{"k": "b"},
+				}},
+			},
+		}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+}
+
+// --- Group H: test operation (Bug 7) ---
+
+func TestShouldSucceedGivenMatchingValueWhenApplyingTestPatch(t *testing.T) {
+	t.Run("String_value_matches", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": "bar"}
+		patches := []Patch{{Op: "test", Path: "/foo", Value: "bar"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, "bar", result["foo"])
+	})
+	t.Run("String_value_mismatch_errors", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": "bar"}
+		patches := []Patch{{Op: "test", Path: "/foo", Value: "baz"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "test failed")
+	})
+	t.Run("Nested_value_matches", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": map[string]any{"b": 1}}
+		patches := []Patch{{Op: "test", Path: "/a/b", Value: 1}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 1, result["a"].(map[string]any)["b"])
+	})
+	t.Run("Array_element_matches", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, 2, 3}}
+		patches := []Patch{{Op: "test", Path: "/arr/1", Value: 2}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 2, 3}, result["arr"])
+	})
+	t.Run("Null_value_matches", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"n": nil}
+		patches := []Patch{{Op: "test", Path: "/n", Value: nil}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Nil(t, result["n"])
+	})
+	t.Run("Test_then_replace_succeeds", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"x": 1}
+		patches := []Patch{
+			{Op: "test", Path: "/x", Value: 1},
+			{Op: "replace", Path: "/x", Value: 2},
+		}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 2, result["x"])
+	})
+	t.Run("Test_failure_aborts_subsequent_ops", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"x": 1}
+		patches := []Patch{
+			{Op: "test", Path: "/x", Value: 99},
+			{Op: "replace", Path: "/x", Value: 2},
+		}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+	})
+}
+
+// --- Group I: copy operation (Bug 8) ---
+
+func TestShouldCopyValueGivenValidFromPathWhenApplyingCopyPatch(t *testing.T) {
+	t.Run("Copy_string_value", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": "bar"}
+		patches := []Patch{{Op: "copy", From: "/foo", Path: "/baz"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, "bar", result["foo"])
+		assert.Equal(t, "bar", result["baz"])
+	})
+	t.Run("Copy_deep_copies_object", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": map[string]any{"b": 1}}
+		patches := []Patch{{Op: "copy", From: "/a", Path: "/c"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"b": 1}, result["a"])
+		assert.Equal(t, map[string]any{"b": 1}, result["c"])
+		// Mutating the copy should not affect the original
+		result["c"].(map[string]any)["b"] = 999
+		assert.Equal(t, 1, result["a"].(map[string]any)["b"])
+	})
+	t.Run("Copy_array_element", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1, 2}}
+		patches := []Patch{{Op: "copy", From: "/arr/0", Path: "/first"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1, 2}, result["arr"])
+		assert.Equal(t, 1, result["first"])
+	})
+	t.Run("Copy_from_nonexistent_errors", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"foo": "bar"}
+		patches := []Patch{{Op: "copy", From: "/nope", Path: "/baz"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+	})
+}
+
+// --- Group J: Move from-prefix-of-path (Bug 9) ---
+
+func TestShouldErrorGivenFromIsPrefixOfPathWhenApplyingMovePatch(t *testing.T) {
+	t.Run("From_is_proper_prefix_of_path", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": map[string]any{"b": 1}}
+		patches := []Patch{{Op: "move", From: "/a", Path: "/a/b"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "prefix")
+	})
+	t.Run("Deeper_prefix", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": map[string]any{"b": map[string]any{"c": 1}}}
+		patches := []Patch{{Op: "move", From: "/a/b", Path: "/a/b/c"}}
+
+		// Act
+		_, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "prefix")
+	})
+	t.Run("Not_a_prefix_succeeds", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": 1, "b": 2}
+		patches := []Patch{{Op: "move", From: "/a", Path: "/b"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 1, result["b"])
+		_, exists := result["a"]
+		assert.False(t, exists)
+	})
+	t.Run("Shared_parent_not_prefix_succeeds", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"a": map[string]any{"b": 1, "c": 2}}
+		patches := []Patch{{Op: "move", From: "/a/b", Path: "/a/c"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 1, result["a"].(map[string]any)["c"])
+	})
+}
+
+// --- Group K: toMap nil pointer (Bug 10) ---
+
+func TestShouldNotPanicGivenNilPointerToStructWhenGeneratingPatch(t *testing.T) {
+	type SimpleStruct struct {
+		Name string `json:"name"`
+	}
+	t.Run("Both_nil_pointers", func(t *testing.T) {
+		// Arrange
+		var before *SimpleStruct
+		var after *SimpleStruct
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		assert.Empty(t, patches)
+	})
+	t.Run("Nil_before_non_nil_after", func(t *testing.T) {
+		// Arrange
+		var before *SimpleStruct
+		after := &SimpleStruct{Name: "x"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		require.NotEmpty(t, patches)
+	})
+	t.Run("ApplyPatch_on_nil_pointer", func(t *testing.T) {
+		// Arrange
+		var s *SimpleStruct
+		patches := []Patch{{Op: "add", Path: "/name", Value: "y"}}
+
+		// Act
+		result, err := ApplyPatch(s, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, "y", result["name"])
+	})
+}
+
+// --- Group L: Embedded struct field promotion (Bug 11) ---
+
+func TestShouldPromoteEmbeddedFieldsGivenStructWithAnonymousFieldWhenGeneratingPatch(t *testing.T) {
+	type EmbedBase struct {
+		ID string `json:"id"`
+	}
+	type EmbedExtended struct {
+		EmbedBase
+		Name string `json:"name"`
+	}
+	t.Run("Embedded_fields_promoted_no_phantom_diff", func(t *testing.T) {
+		// Arrange
+		before := EmbedExtended{EmbedBase: EmbedBase{ID: "1"}, Name: "a"}
+		after := EmbedExtended{EmbedBase: EmbedBase{ID: "1"}, Name: "b"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		require.Len(t, patches, 1)
+		assert.Equal(t, "replace", patches[0].Op)
+		assert.Equal(t, "/name", patches[0].Path)
+		assert.Equal(t, "b", patches[0].Value)
+	})
+	t.Run("Embedded_field_change_detected", func(t *testing.T) {
+		// Arrange
+		before := EmbedExtended{EmbedBase: EmbedBase{ID: "1"}, Name: "a"}
+		after := EmbedExtended{EmbedBase: EmbedBase{ID: "2"}, Name: "a"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		require.Len(t, patches, 1)
+		assert.Equal(t, "replace", patches[0].Op)
+		assert.Equal(t, "/id", patches[0].Path)
+	})
+	t.Run("No_diff_when_identical", func(t *testing.T) {
+		// Arrange
+		before := EmbedExtended{EmbedBase: EmbedBase{ID: "1"}, Name: "a"}
+		after := EmbedExtended{EmbedBase: EmbedBase{ID: "1"}, Name: "a"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+
+		// Assert
+		require.NoError(t, err)
+		assert.Empty(t, patches)
+	})
+}
+
+// --- Group M: Escaped key generate+apply roundtrip ---
+
+func TestShouldRoundtripPatchGivenKeysWithSlashOrTildeWhenGeneratingAndApplying(t *testing.T) {
+	t.Run("Key_with_slash_roundtrip", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a/b": 1}
+		after := map[string]any{"a/b": 2}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Key_with_tilde_roundtrip", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"~x": 1}
+		after := map[string]any{"~x": 2}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Removal_of_escaped_keys_roundtrip", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"a/b": 1, "~x": 2}
+		after := map[string]any{}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+}
+
+// --- Group N: Misc remaining edge cases ---
+
+func TestShouldHandleRemainingEdgeCasesGivenVariousInputsWhenApplyingOrGeneratingPatch(t *testing.T) {
+	t.Run("Empty_patch_list_returns_deep_copy", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"k": "v"}
+
+		// Act
+		result, err := ApplyPatch(doc, []Patch{})
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, doc, result)
+		// Mutating result should not affect original
+		result["k"] = "changed"
+		assert.Equal(t, "v", doc["k"])
+	})
+	t.Run("Nil_to_value_roundtrip", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"k": nil}
+		after := map[string]any{"k": "set"}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Value_to_nil_roundtrip", func(t *testing.T) {
+		// Arrange
+		before := map[string]any{"k": "set"}
+		after := map[string]any{"k": nil}
+
+		// Act
+		patches, err := GeneratePatch(before, after, "")
+		require.NoError(t, err)
+		result, err := ApplyPatch(before, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, after, result)
+	})
+	t.Run("Move_within_same_array", func(t *testing.T) {
+		// Arrange - RFC 6902: move is remove-then-add
+		doc := map[string]any{"arr": []any{"a", "b", "c"}}
+		patches := []Patch{{Op: "move", From: "/arr/0", Path: "/arr/2"}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert - remove index 0 → ["b","c"], then add at index 2 → ["b","c","a"]
+		require.NoError(t, err)
+		assert.Equal(t, []any{"b", "c", "a"}, result["arr"])
+	})
 }

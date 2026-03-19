@@ -5,9 +5,9 @@
 
 This repository contains small, focused Go packages for common JSON tasks:
 
-- `jsonschema` — generate JSON Schema from Go types.
-- `jsonpatch` — compute and apply RFC 6902 JSON Patch operations.
-- `polymorphic` — register and marshal/unmarshal polymorphic types using a discriminator envelope.
+- **jsonschema** — generate JSON Schema from Go types and validate JSON-like data against those schemas (draft 2019-09).
+- **jsonpatch** — compute and apply RFC 6902 JSON Patch operations (add, remove, replace, move).
+- **polymorphic** — register and marshal/unmarshal polymorphic types using a discriminator envelope.
 
 ## Quick start
 
@@ -17,13 +17,17 @@ These short examples help someone new to the project get started quickly. For mo
 
 See the `docs/` directory for package-specific guides and advanced examples:
 
-- `docs/jsonschema.md` — advanced schema generation, tag-driven features such as `json:",inline"`, `x-*` extension tags, and direct JSON Schema keyword tags (`const`, `examples`, `$defs`, `$schema`, `$id`).
-- `docs/jsonpatch.md` — patch generation and application details.
-- `docs/polymorphic.md` — registry and polymorphic envelope patterns.
+- **docs/jsonschema.md** — schema generation and validation, tag-driven features (`json:",inline"`, `x-*`, `const`, `examples`, `$defs`), components, and nullable types.
+- **docs/jsonpatch.md** — RFC 6902 patch generation and application, array heuristics, and `ApplyPatchAndHydrate` for typed values.
+- **docs/polymorphic.md** — discriminator envelope, registry, and testing with `ClearRegistry`.
 
 ## Prerequisites
 
-Make sure you have a Go toolchain installed (Go 1.20+ recommended). Add the module to your project with the module path `github.com/fgrzl/json`.
+Go 1.20 or later (1.25 used in CI). Add the module to your project:
+
+```bash
+go get github.com/fgrzl/json
+```
 
 ## jsonschema — quick start
 
@@ -46,7 +50,7 @@ func main() {
 }
 ```
 
-See `docs/jsonschema.md` for advanced scenarios: components, self-referential types, nullable fields, and tags.
+Use `Validate(schema, data)` to check decoded JSON (maps, slices, primitives) against a generated schema. See `docs/jsonschema.md` for validation, components, self-referential types, nullable fields, and tags.
 
 ## jsonpatch — quick start
 
@@ -118,13 +122,20 @@ Add more guides under `docs/` using the naming convention `docs/my-doc.md` (all 
 
 ## Running tests
 
-Run package tests locally:
+Run all package tests:
 
 ```shell
 go test ./...
 ```
 
-For formatting:
+Run tests with coverage and print a summary:
+
+```shell
+go test ./... -coverprofile=coverage.out
+go tool cover -func=coverage.out
+```
+
+Format code:
 
 ```shell
 gofmt -w .

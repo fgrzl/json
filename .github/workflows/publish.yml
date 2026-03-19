@@ -1,4 +1,4 @@
-name: Pre-Release
+name: Publish
 
 on:
   workflow_dispatch:
@@ -38,4 +38,3 @@ jobs:
 
       - name: Prune Pre-release Tags
         uses: fgrzl/actions/prune-tags@v0.0.6
-

@@ -3,8 +3,11 @@
 Summary
 -------
 
-Documentation for the `polymorphic` package. This package provides a small registry and
-helpers for marshaling/unmarshaling polymorphic types using a discriminator field (envelope).
+The `polymorphic` package marshals and unmarshals polymorphic JSON using a discriminator
+envelope: a top-level object with `$type` (discriminator) and `content` (payload).
+Register types with `RegisterType[T]()` or `Register(discriminator, factory)`; use
+`MarshalPolymorphicJSON` / `UnmarshalPolymorphicJSON` for the wire format. See package
+`doc.go` for the full contract (wire format, global registry, ClearRegistry).
 
 Try it
 ------
@@ -51,8 +54,8 @@ func main() {
 Notes
 -----
 
-- Use `Register`/`RegisterType` to register factories or concrete types with their discriminators.
-- The registry is global; tests should call `polymorphic.ClearRegistry()` to avoid cross-test leakage.
+- Use `RegisterType[T]()` or `Register(discriminator, factory)` to register types.
+- The registry is process-wide global state; call `ClearRegistry()` in tests to avoid leakage.
 
 Advanced scenarios
 ------------------

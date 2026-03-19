@@ -3,8 +3,11 @@
 Summary
 -------
 
-Documentation for the `jsonpatch` package. This package provides utilities to generate and
-apply JSON Patch (RFC 6902) operations between two JSON documents.
+The `jsonpatch` package generates and applies JSON Patch operations (RFC 6902). Use
+`GeneratePatch(before, after, basePath)` to produce a list of operations, and
+`ApplyPatch(original, patches)` or `ApplyPatchAndHydrate(original, updated, patches)`
+to apply them. See package `doc.go` for the full contract (operations, array handling,
+special types).
 
 Try it
 ------
@@ -44,9 +47,10 @@ func main() {
 Notes
 -----
 
-- The patch generation uses a best-effort heuristic for arrays (LCS-based).
-- Values that implement `json.Marshaler` or `encoding.TextMarshaler` are diffed using their JSON/text representation instead of their internal Go layout.
-- See the package tests for edge cases and behavior when array element identity is ambiguous.
+- Supported operations: add, remove, replace, move. Paths use JSON Pointer (RFC 6901).
+- Array diffs use an LCS-based heuristic; element identity is by deep equality.
+- Types implementing `json.Marshaler` or `encoding.TextMarshaler` are diffed by their marshaled form.
+- See the package tests for edge cases and ambiguous array identity.
 
 Advanced scenarios
 ------------------

@@ -1,6 +1,7 @@
 // Package jsonschema provides helpers to generate JSON Schema documents
-// from Go types. It supports building a root schema and collecting
-// reusable component schemas for nested types.
+// from Go types. Generated schemas are compatible with JSON Schema draft 2019-09.
+// It supports building a root schema and collecting reusable component schemas
+// for nested types.
 package jsonschema
 
 import (
@@ -77,6 +78,9 @@ func (b *Builder) SchemaWithComponents(t reflect.Type) (map[string]any, map[stri
 }
 
 func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any {
+	if t == nil {
+		panic("reflect.Type must not be nil")
+	}
 	// For the root type, we want the actual schema, not a reference
 	// But we should still generate components for nested types
 	for t.Kind() == reflect.Ptr {
@@ -134,7 +138,9 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 }
 
 func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
-
+	if t == nil {
+		panic("reflect.Type must not be nil")
+	}
 	name := t.Name()
 	if name != "" {
 		slog.Info("generate schema", "type", name)

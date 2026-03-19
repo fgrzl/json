@@ -66,24 +66,31 @@ const (
 	TypeString  = "string"
 )
 
-// registeredSchemas maps Go types to their JSON Schema definitions.
-var registeredSchemas = map[reflect.Type]map[string]any{
-	reflect.TypeOf(uuid.UUID{}):            {TypeKey: TypeString, FormatKey: "uuid"},
-	reflect.TypeOf(time.Time{}):            {TypeKey: TypeString, FormatKey: "date-time"},
-	reflect.TypeOf([]byte{}):               {TypeKey: TypeString, FormatKey: "byte"},
-	reflect.TypeOf((*url.URL)(nil)).Elem(): {TypeKey: TypeString, FormatKey: "uri"},
-	reflect.TypeOf(net.IP{}):               {TypeKey: TypeString, FormatKey: "ipv4"},
+// builtinSchemas returns a new map containing the default type-to-schema mappings.
+// Used to initialize and reset the package registry.
+func builtinSchemas() map[reflect.Type]map[string]any {
+	return map[reflect.Type]map[string]any{
+		reflect.TypeOf(uuid.UUID{}):            {TypeKey: TypeString, FormatKey: "uuid"},
+		reflect.TypeOf(time.Time{}):            {TypeKey: TypeString, FormatKey: "date-time"},
+		reflect.TypeOf([]byte{}):               {TypeKey: TypeString, FormatKey: "byte"},
+		reflect.TypeOf((*url.URL)(nil)).Elem(): {TypeKey: TypeString, FormatKey: "uri"},
+		reflect.TypeOf(net.IP{}):               {TypeKey: TypeString, FormatKey: "ipv4"},
 
-	// Nullable SQL types
-	reflect.TypeOf(sql.NullString{}):  {TypeKey: []any{TypeString, "null"}},
-	reflect.TypeOf(sql.NullInt64{}):   {TypeKey: []any{TypeInteger, "null"}},
-	reflect.TypeOf(sql.NullBool{}):    {TypeKey: []any{TypeBoolean, "null"}},
-	reflect.TypeOf(sql.NullFloat64{}): {TypeKey: []any{TypeNumber, "null"}},
-	reflect.TypeOf(sql.NullTime{}): {
-		TypeKey:   []any{TypeString, "null"},
-		FormatKey: "date-time",
-	},
+		// Nullable SQL types
+		reflect.TypeOf(sql.NullString{}):  {TypeKey: []any{TypeString, "null"}},
+		reflect.TypeOf(sql.NullInt64{}):   {TypeKey: []any{TypeInteger, "null"}},
+		reflect.TypeOf(sql.NullBool{}):   {TypeKey: []any{TypeBoolean, "null"}},
+		reflect.TypeOf(sql.NullFloat64{}): {TypeKey: []any{TypeNumber, "null"}},
+		reflect.TypeOf(sql.NullTime{}): {
+			TypeKey:   []any{TypeString, "null"},
+			FormatKey: "date-time",
+		},
+	}
 }
+
+// registeredSchemas maps Go types to their JSON Schema definitions.
+// It is process-wide global state; use ClearRegistry to reset to built-ins only.
+var registeredSchemas = builtinSchemas()
 
 // rawMessageType is the reflect.Type for json.RawMessage and is used to
 // ensure RawMessage is treated as raw JSON (empty schema) rather than a
@@ -506,7 +513,9 @@ func jsonFieldName(f reflect.StructField) string {
 	return tag
 }
 
-// RegisterSchema registers a custom JSON Schema for a Go type.
+// RegisterSchema registers a custom JSON Schema for a Go type. The registry is
+// process-wide and not safe for concurrent use. To restore the default built-in
+// type set (e.g. in tests), call ClearRegistry.
 func RegisterSchema(t reflect.Type, schema map[string]any) {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -514,6 +523,14 @@ func RegisterSchema(t reflect.Type, schema map[string]any) {
 	if schema != nil {
 		registeredSchemas[t] = schema
 	}
+}
+
+// ClearRegistry resets the type registry to the default built-in mappings and
+// removes any custom registrations made via RegisterSchema. Intended for tests
+// or process reset. Not safe to call concurrently with schema generation or
+// RegisterSchema.
+func ClearRegistry() {
+	registeredSchemas = builtinSchemas()
 }
 
 // GenerateSchemaRawMessage returns a JSON Schema as a raw JSON message.

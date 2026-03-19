@@ -463,6 +463,60 @@ func TestLoadFactoryShouldFailGivenInvalidFactoryType(t *testing.T) {
 	assert.ErrorContains(t, err, "not registered")
 }
 
+func TestNewEnvelopePanicsGivenNil(t *testing.T) {
+	assert.Panics(t, func() {
+		NewEnvelope(nil)
+	}, "NewEnvelope(nil) should panic")
+}
+
+func TestRegisterWithDiscriminatorPanicsGivenEmptyString(t *testing.T) {
+	ClearRegistry()
+	assert.PanicsWithValue(t, "discriminator must be non-empty", func() {
+		RegisterWithDiscriminator("", func() any { return &Person{} })
+	}, "RegisterWithDiscriminator with empty string should panic")
+}
+
+func TestUnmarshalFailsGivenEmptyType(t *testing.T) {
+	ClearRegistry()
+	RegisterType[Person]()
+	jsonStr := `{"$type":"","content":{"name":"Alice","age":30}}`
+	var envelope Envelope
+	err := envelope.UnmarshalJSON([]byte(jsonStr))
+	assert.Error(t, err, "Should error when $type is empty")
+	assert.ErrorContains(t, err, "empty $type discriminator", "Error should mention empty discriminator")
+}
+
+func TestUnmarshalFailsGivenNullContent(t *testing.T) {
+	ClearRegistry()
+	RegisterType[Person]()
+	jsonStr := `{"$type":"person","content":null}`
+	var envelope Envelope
+	err := envelope.UnmarshalJSON([]byte(jsonStr))
+	assert.Error(t, err, "Should error when content is null")
+	assert.ErrorContains(t, err, "missing content", "Error should mention missing content")
+}
+
+func TestToPageFiltersToRequestedTypeGivenMixedEnvelopes(t *testing.T) {
+	ClearRegistry()
+	RegisterType[Person]()
+	RegisterType[Car]()
+	page := &PolymorphicPage{
+		Envelopes: []*Envelope{
+			NewEnvelope(&Person{Name: "Alice", Age: 30}),
+			NewEnvelope(&Car{Make: "Tesla", Model: "S"}),
+			NewEnvelope(&Person{Name: "Bob", Age: 25}),
+		},
+	}
+	// Act: project to Person only
+	result := ToPage[*Person](page)
+	// Assert: only Person entries, in order
+	assert.Len(t, result.Models, 2, "ToPage[*Person] should include only Person envelopes")
+	assert.Equal(t, "Alice", result.Models[0].Name)
+	assert.Equal(t, 30, result.Models[0].Age)
+	assert.Equal(t, "Bob", result.Models[1].Name)
+	assert.Equal(t, 25, result.Models[1].Age)
+}
+
 type Car struct {
 	Make  string `json:"make"`
 	Model string `json:"model"`

@@ -953,7 +953,7 @@ func TestShouldUseCustomRegisteredSchema(t *testing.T) {
 	assertSchema(t, CustomType{}, customSchema)
 
 	// Cleanup
-	delete(registeredSchemas, reflect.TypeOf(CustomType{}))
+	ClearRegistry()
 }
 
 func TestShouldHandlePointerTypeInRegistration(t *testing.T) {
@@ -973,7 +973,7 @@ func TestShouldHandlePointerTypeInRegistration(t *testing.T) {
 	assertSchema(t, &CustomType{}, customSchema)
 
 	// Cleanup
-	delete(registeredSchemas, reflect.TypeOf(CustomType{}))
+	ClearRegistry()
 }
 
 func TestShouldIgnoreNilSchemaInRegistration(t *testing.T) {
@@ -1155,16 +1155,17 @@ func TestShouldReturnBuilderComponents(t *testing.T) {
 	assert.Contains(t, components, "TestStruct")
 }
 
-func TestShouldHandleNilTypeGracefully(t *testing.T) {
-	// This test demonstrates that nil types cause a panic in the current implementation
-	// The function should handle nil types more gracefully
-
-	// Arrange
+func TestSchemaPanicsGivenNilType(t *testing.T) {
 	builder := NewBuilder()
-
-	// Act & Assert - this will panic in current implementation
-	assert.Panics(t, func() {
+	assert.PanicsWithValue(t, "reflect.Type must not be nil", func() {
 		builder.Schema(nil)
+	})
+}
+
+func TestSchemaWithComponentsPanicsGivenNilType(t *testing.T) {
+	builder := NewBuilder()
+	assert.PanicsWithValue(t, "reflect.Type must not be nil", func() {
+		builder.SchemaWithComponents(nil)
 	})
 }
 

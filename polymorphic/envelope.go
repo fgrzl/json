@@ -7,8 +7,8 @@ import (
 
 // NewEnvelope creates an Envelope wrapping a polymorphic object. The
 // Envelope contains the discriminator value and the content to be
-// marshaled. The discriminator is obtained by calling
-// obj.GetDiscriminator().
+// marshaled. The discriminator is obtained by calling obj.GetDiscriminator().
+// It panics if obj is nil.
 func NewEnvelope(obj Polymorphic) *Envelope {
 	return &Envelope{
 		Discriminator: obj.GetDiscriminator(),
@@ -66,9 +66,10 @@ func (e *Envelope) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements json.Unmarshaler for Envelope. It expects a
-// JSON object with a `$type` discriminator and a `content` field. The
-// content is unmarshaled into a concrete instance returned by the
-// registered factory for that discriminator.
+// JSON object with a non-empty `$type` discriminator and a `content` field.
+// The content must be present and non-null; null or missing content
+// returns an error. The content is unmarshaled into a concrete instance
+// returned by the registered factory for that discriminator.
 func (e *Envelope) UnmarshalJSON(data []byte) error {
 	aux := make(map[string]json.RawMessage)
 
@@ -84,6 +85,9 @@ func (e *Envelope) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(rawType, &e.Discriminator); err != nil {
 		return fmt.Errorf("invalid $type format: %w", err)
 	}
+	if e.Discriminator == "" {
+		return fmt.Errorf("empty $type discriminator")
+	}
 
 	// Ensure type is registered
 	factory, err := LoadFactory(e.Discriminator)
@@ -94,6 +98,9 @@ func (e *Envelope) UnmarshalJSON(data []byte) error {
 	// Extract content
 	rawContent, found := aux["content"]
 	if !found || len(rawContent) == 0 {
+		return fmt.Errorf("missing content for type: %q", e.Discriminator)
+	}
+	if string(rawContent) == "null" {
 		return fmt.Errorf("missing content for type: %q", e.Discriminator)
 	}
 

@@ -3,8 +3,10 @@
 Summary
 -------
 
-Documentation for the `jsonschema` package. This package helps generate JSON Schema for
-Go types and optionally collect reusable schema components.
+The `jsonschema` package generates JSON Schema (draft 2019-09) from Go types and validates
+JSON-like data against those schemas. Use `GenerateSchema` or `Builder` to produce schemas;
+use `Validate(schema, data)` to check decoded JSON. See package `doc.go` for the full
+contract (keywords, registry, ClearRegistry).
 
 Try it
 ------
@@ -34,13 +36,24 @@ func main() {
 }
 ```
 
+Validation
+----------
+
+Use `Validate(schema, data)` to check decoded JSON (`map[string]any`, `[]any`, primitives)
+against a schema. On failure it returns `*ErrValidation` with `Errors()` giving path and
+message for each failure. Supported keywords include type (including nullable), required,
+properties, items, additionalProperties, enum, const, min/max length and items, pattern,
+minimum/maximum, uniqueItems, $ref (same-document), and allOf/anyOf/oneOf/not. Roundtrip:
+generate a schema from a type, then validate decoded JSON with that schema.
+
 Notes
 -----
 
 - `Builder.Schema()` returns a schema for the provided type but does not automatically
   populate the builder components; use `SchemaWithComponents()` when you need a root
   schema that includes references to collected components.
-- The `Builder` is not safe for concurrent use unless explicitly documented otherwise.
+- The `Builder` is not safe for concurrent use. Passing a nil `reflect.Type` to
+  `Schema` or `SchemaWithComponents` will panic.
 
 Advanced scenarios
 ------------------
@@ -132,7 +145,7 @@ generator represents additional properties for object-like fields:
 
 This allows mixing flexible raw JSON with more strictly typed nested schemas.
 
-5) Tips & gotchas
+7) Tips & gotchas
 
 - The builder expects a non-nil reflect.Type for the root; passing a nil value
   will panic.
