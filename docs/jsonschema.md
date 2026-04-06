@@ -19,14 +19,14 @@ package main
 import (
     "encoding/json"
     "fmt"
+  "reflect"
 
     "github.com/fgrzl/json/jsonschema"
 )
 
 func main() {
     b := jsonschema.NewBuilder()
-    // Pass a value of the type you want to generate a schema for.
-    s := b.Schema(struct{ Name string `json:"name"` }{})
+  s := b.Schema(reflect.TypeOf(struct{ Name string `json:"name"` }{}))
     comps := b.Components()
 
     sOut, _ := json.MarshalIndent(s, "", "  ")
@@ -43,8 +43,10 @@ Use `Validate(schema, data)` to check decoded JSON (`map[string]any`, `[]any`, p
 against a schema. On failure it returns `*ErrValidation` with `Errors()` giving path and
 message for each failure. Supported keywords include type (including nullable), required,
 properties, items, additionalProperties, enum, const, min/max length and items, pattern,
-minimum/maximum, uniqueItems, $ref (same-document), and allOf/anyOf/oneOf/not. Roundtrip:
-generate a schema from a type, then validate decoded JSON with that schema.
+minimum/maximum, multipleOf, min/max properties, patternProperties, contains,
+uniqueItems, $ref (same-document), allOf/anyOf/oneOf/not, and if/then/else. Unresolved
+same-document refs fail validation instead of being ignored. Roundtrip: generate a schema
+from a type, then validate decoded JSON with that schema.
 
 Notes
 -----
@@ -65,9 +67,10 @@ components and produce a root schema that references them. This is useful for
 large schemas with repeated types.
 
 ```go
+import "reflect"
+
 b := jsonschema.NewBuilder()
-root := b.SchemaWithComponents(myStructType)
-components := b.Components()
+root, components := b.SchemaWithComponents(reflect.TypeOf(MyStruct{}))
 // root may contain $ref entries pointing into components
 ```
 

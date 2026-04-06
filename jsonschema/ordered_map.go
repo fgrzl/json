@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"gopkg.in/yaml.v3"
@@ -32,11 +33,26 @@ func (m *OrderedMap) Set(key string, value any) {
 
 // MarshalJSON marshals the OrderedMap to JSON using the insertion order.
 func (m *OrderedMap) MarshalJSON() ([]byte, error) {
-	obj := make(map[string]any, len(m.keys))
-	for _, k := range m.keys {
-		obj[k] = m.data[k]
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range m.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		valueBytes, err := json.Marshal(m.data[k])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		buf.Write(valueBytes)
 	}
-	return json.Marshal(obj)
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // MarshalYAML marshals the OrderedMap to a YAML node preserving order.

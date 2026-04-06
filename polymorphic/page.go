@@ -1,7 +1,7 @@
 package polymorphic
 
 func init() {
-	RegisterType[PolymorphicPage]()
+	registerDefaultType[PolymorphicPage]()
 }
 
 type PolymorphicPage struct {

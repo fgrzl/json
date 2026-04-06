@@ -2,6 +2,7 @@ package jsonschema
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
@@ -46,13 +47,18 @@ func Validate(schema map[string]any, data any) error {
 }
 
 func validateAt(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+	if schema == nil {
+		return
+	}
+
 	// $ref: resolve and validate against referenced schema (same-document only)
 	if ref, ok := schema[RefKey].(string); ok {
-		resolved := resolveRef(root, ref)
-		if resolved != nil {
+		resolved, err := resolveRef(root, ref)
+		if err != nil {
+			addErr(errs, path, err.Error())
+		} else {
 			validateAt(root, path, resolved, data, errs)
 		}
-		return
 	}
 
 	// allOf: must validate against all subschemas
@@ -62,11 +68,11 @@ func validateAt(root map[string]any, path string, schema map[string]any, data an
 				validateAt(root, path, sub, data, errs)
 			}
 		}
-		return
 	}
 
 	// anyOf: at least one must pass
 	if anyOf, ok := schema[AnyOfKey].([]any); ok {
+		matched := false
 		var anyErrs []ValidationError
 		for _, s := range anyOf {
 			sub, _ := s.(map[string]any)
@@ -76,12 +82,14 @@ func validateAt(root map[string]any, path string, schema map[string]any, data an
 			var subErrs []ValidationError
 			validateAt(root, path, sub, data, &subErrs)
 			if len(subErrs) == 0 {
-				return
+				matched = true
+				break
 			}
 			anyErrs = append(anyErrs, subErrs...)
 		}
-		*errs = append(*errs, anyErrs...)
-		return
+		if !matched {
+			*errs = append(*errs, anyErrs...)
+		}
 	}
 
 	// oneOf: exactly one must pass
@@ -105,7 +113,6 @@ func validateAt(root map[string]any, path string, schema map[string]any, data an
 			*errs = append(*errs, allErrs...)
 			addErr(errs, path, fmt.Sprintf("value must match exactly one schema in oneOf (matched %d)", matchCount))
 		}
-		return
 	}
 
 	// not: subschema must fail
@@ -115,41 +122,81 @@ func validateAt(root map[string]any, path string, schema map[string]any, data an
 		if len(notErrs) == 0 {
 			addErr(errs, path, "value must not match schema in not")
 		}
-		return
 	}
+
+	validateIfThenElse(root, path, schema, data, errs)
 
 	// type: string or []any for nullable
 	if typeVal, hasType := schema[TypeKey]; hasType {
-		if typeSlice, ok := typeVal.([]any); ok {
-			// nullable: ["string", "null"] etc.
-			if data == nil {
-				return
-			}
-			for _, t := range typeSlice {
-				tstr, _ := t.(string)
-				if tstr == "null" {
-					continue
-				}
-				if typeMatches(tstr, data) {
-					validateTypeConstraints(root, path, schema, data, errs)
-					return
-				}
-			}
-			addErr(errs, path, fmt.Sprintf("value must be one of types %v", typeSlice))
-			return
+		if validateExplicitType(root, path, schema, typeVal, data, errs) {
+			validateEnumConst(path, schema, data, errs)
 		}
-		typeStr, _ := typeVal.(string)
-		if !typeMatches(typeStr, data) {
-			addErr(errs, path, fmt.Sprintf("expected %s, got %s", typeStr, jsonKind(data)))
-			return
-		}
-		validateTypeConstraints(root, path, schema, data, errs)
 		return
 	}
 
-	// no type: allow and recurse into object/array if present
-	if obj, ok := data.(map[string]any); ok {
-		validateObject(root, path, schema, obj, errs)
+	validateInstanceConstraints(root, path, schema, data, errs)
+	validateEnumConst(path, schema, data, errs)
+}
+
+func validateExplicitType(root map[string]any, path string, schema map[string]any, typeVal any, data any, errs *[]ValidationError) bool {
+	if typeSlice, ok := typeVal.([]any); ok {
+		matched := false
+		for _, t := range typeSlice {
+			tstr, _ := t.(string)
+			if typeMatches(tstr, data) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			addErr(errs, path, fmt.Sprintf("value must be one of types %v", typeSlice))
+			return false
+		}
+		validateTypeConstraints(root, path, schema, data, errs)
+		return true
+	}
+
+	typeStr, _ := typeVal.(string)
+	if !typeMatches(typeStr, data) {
+		addErr(errs, path, fmt.Sprintf("expected %s, got %s", typeStr, jsonKind(data)))
+		return false
+	}
+	validateTypeConstraints(root, path, schema, data, errs)
+	return true
+}
+
+func validateInstanceConstraints(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+	switch value := data.(type) {
+	case map[string]any:
+		validateObject(root, path, schema, value, errs)
+	case []any:
+		validateArray(root, path, schema, value, errs)
+	case string:
+		validateStringConstraints(path, schema, value, errs)
+	default:
+		if _, ok := toFloat(data); ok {
+			validateNumberConstraints(path, schema, data, errs)
+		}
+	}
+}
+
+func validateIfThenElse(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+	ifSchema, ok := schema[IfKey].(map[string]any)
+	if !ok {
+		return
+	}
+
+	var ifErrs []ValidationError
+	validateAt(root, path, ifSchema, data, &ifErrs)
+	if len(ifErrs) == 0 {
+		if thenSchema, ok := schema[ThenKey].(map[string]any); ok {
+			validateAt(root, path, thenSchema, data, errs)
+		}
+		return
+	}
+
+	if elseSchema, ok := schema[ElseKey].(map[string]any); ok {
+		validateAt(root, path, elseSchema, data, errs)
 	}
 }
 
@@ -179,11 +226,18 @@ func validateTypeConstraints(root map[string]any, path string, schema map[string
 	case TypeNumber, TypeInteger:
 		validateNumberConstraints(path, schema, data, errs)
 	}
-	// enum, const apply to any type
-	validateEnumConst(path, schema, data, errs)
+}
+
+type patternProperty struct {
+	re     *regexp.Regexp
+	schema map[string]any
 }
 
 func validateObject(root map[string]any, path string, schema map[string]any, obj map[string]any, errs *[]ValidationError) {
+	validateObjectPropertyCounts(path, schema, len(obj), errs)
+	patternProps := compilePatternProperties(path, schema, errs)
+	matchedByPattern := make(map[string]bool)
+
 	if req, ok := schema[RequiredKey].([]any); ok {
 		for _, r := range req {
 			key, _ := r.(string)
@@ -203,22 +257,26 @@ func validateObject(root map[string]any, path string, schema map[string]any, obj
 				validateAt(root, subPath, subSchema, val, errs)
 			}
 		}
+		for _, patternProp := range patternProps {
+			if patternProp.re.MatchString(key) {
+				matchedByPattern[key] = true
+				validateAt(root, subPath, patternProp.schema, val, errs)
+			}
+		}
 	}
-	// additionalProperties (Phase 2)
-	validateAdditionalProperties(root, path, schema, obj, errs)
+	validateAdditionalProperties(root, path, schema, obj, matchedByPattern, errs)
 }
 
 func validateArray(root map[string]any, path string, schema map[string]any, arr []any, errs *[]ValidationError) {
 	itemsSchema, hasItems := schema[ItemsKey].(map[string]any)
-	if !hasItems {
-		return
+	if hasItems {
+		for i, item := range arr {
+			validateAt(root, fmt.Sprintf("%s/%d", path, i), itemsSchema, item, errs)
+		}
 	}
-	for i, item := range arr {
-		validateAt(root, fmt.Sprintf("%s/%d", path, i), itemsSchema, item, errs)
-	}
-	// minItems, maxItems, uniqueItems (Phase 4)
 	validateArrayLength(path, schema, len(arr), errs)
 	validateUniqueItems(path, schema, arr, errs)
+	validateContains(root, path, schema, arr, errs)
 }
 
 func validateStringConstraints(path string, schema map[string]any, data any, errs *[]ValidationError) {
@@ -269,6 +327,13 @@ func validateNumberConstraints(path string, schema map[string]any, data any, err
 			addErr(errs, path, fmt.Sprintf("value %v must be < exclusiveMaximum %v", data, exMax))
 		}
 	}
+	if multiple, ok := toFloat(schema[MultipleOfKey]); ok {
+		if multiple == 0 {
+			addErr(errs, path, "multipleOf must be non-zero")
+		} else if !isMultipleOf(n, multiple) {
+			addErr(errs, path, fmt.Sprintf("value %v not multiple of %v", data, multiple))
+		}
+	}
 }
 
 func validateEnumConst(path string, schema map[string]any, data any, errs *[]ValidationError) {
@@ -288,7 +353,43 @@ func validateEnumConst(path string, schema map[string]any, data any, errs *[]Val
 	}
 }
 
-func validateAdditionalProperties(root map[string]any, path string, schema map[string]any, obj map[string]any, errs *[]ValidationError) {
+func validateObjectPropertyCounts(path string, schema map[string]any, length int, errs *[]ValidationError) {
+	if min, ok := toFloat(schema[MinPropertiesKey]); ok {
+		if float64(length) < min {
+			addErr(errs, path, fmt.Sprintf("object property count %d less than minProperties %d", length, int(min)))
+		}
+	}
+	if max, ok := toFloat(schema[MaxPropertiesKey]); ok {
+		if float64(length) > max {
+			addErr(errs, path, fmt.Sprintf("object property count %d greater than maxProperties %d", length, int(max)))
+		}
+	}
+}
+
+func compilePatternProperties(path string, schema map[string]any, errs *[]ValidationError) []patternProperty {
+	rawPatternProps, _ := schema[PatternPropertiesKey].(map[string]any)
+	if rawPatternProps == nil {
+		return nil
+	}
+
+	compiled := make([]patternProperty, 0, len(rawPatternProps))
+	for pattern, value := range rawPatternProps {
+		subSchema, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			addErr(errs, path, fmt.Sprintf("invalid patternProperties regex %s", pattern))
+			continue
+		}
+		compiled = append(compiled, patternProperty{re: re, schema: subSchema})
+	}
+
+	return compiled
+}
+
+func validateAdditionalProperties(root map[string]any, path string, schema map[string]any, obj map[string]any, matchedByPattern map[string]bool, errs *[]ValidationError) {
 	props, _ := schema[PropertiesKey].(map[string]any)
 	allowed := map[string]bool{}
 	for k := range props {
@@ -297,7 +398,7 @@ func validateAdditionalProperties(root map[string]any, path string, schema map[s
 	additionalVal := schema[AdditionalPropertiesKey]
 	if additionalVal == false {
 		for k := range obj {
-			if !allowed[k] {
+			if !allowed[k] && !matchedByPattern[k] {
 				addErr(errs, path+"/"+escapeJSONPointer(k), "additional property not allowed")
 			}
 		}
@@ -305,12 +406,29 @@ func validateAdditionalProperties(root map[string]any, path string, schema map[s
 	}
 	if subSchema, ok := additionalVal.(map[string]any); ok {
 		for k, v := range obj {
-			if allowed[k] {
+			if allowed[k] || matchedByPattern[k] {
 				continue
 			}
 			validateAt(root, path+"/"+escapeJSONPointer(k), subSchema, v, errs)
 		}
 	}
+}
+
+func validateContains(root map[string]any, path string, schema map[string]any, arr []any, errs *[]ValidationError) {
+	containsSchema, ok := schema[ContainsKey].(map[string]any)
+	if !ok {
+		return
+	}
+
+	for i, item := range arr {
+		var itemErrs []ValidationError
+		validateAt(root, fmt.Sprintf("%s/%d", path, i), containsSchema, item, &itemErrs)
+		if len(itemErrs) == 0 {
+			return
+		}
+	}
+
+	addErr(errs, path, "array must contain at least one item matching contains")
 }
 
 func validateArrayLength(path string, schema map[string]any, length int, errs *[]ValidationError) {
@@ -330,14 +448,13 @@ func validateUniqueItems(path string, schema map[string]any, arr []any, errs *[]
 	if schema[UniqueItemsKey] != true {
 		return
 	}
-	seen := make(map[string]bool)
-	for i, item := range arr {
-		key := jsonValueKey(item)
-		if seen[key] {
-			addErr(errs, fmt.Sprintf("%s/%d", path, i), "duplicate array items (uniqueItems)")
-			return
+	for i := 1; i < len(arr); i++ {
+		for j := 0; j < i; j++ {
+			if deepEqualJSON(arr[i], arr[j]) {
+				addErr(errs, fmt.Sprintf("%s/%d", path, i), "duplicate array items (uniqueItems)")
+				return
+			}
 		}
-		seen[key] = true
 	}
 }
 
@@ -403,6 +520,11 @@ func toFloat(v any) (float64, bool) {
 	return 0, false
 }
 
+func isMultipleOf(value, multiple float64) bool {
+	quotient := value / multiple
+	return math.Abs(quotient-math.Round(quotient)) <= 1e-9
+}
+
 func addErr(errs *[]ValidationError, path, msg string) {
 	*errs = append(*errs, ValidationError{Path: path, Message: msg})
 }
@@ -456,33 +578,19 @@ func deepEqualJSON(a, b any) bool {
 	}
 }
 
-// jsonValueKey returns a string key for simple equality in uniqueItems.
-func jsonValueKey(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "null"
-	case bool:
-		if x {
-			return "true"
-		}
-		return "false"
-	case float64:
-		return fmt.Sprintf("%v", x)
-	case string:
-		return "s:" + x
-	default:
-		return fmt.Sprintf("%p", v)
-	}
-}
-
 // resolveRef resolves #/$defs/X or #/defs/X from the root (same-document only).
-func resolveRef(rootSchema map[string]any, ref string) map[string]any {
-	if ref == "" || ref[0] != '#' {
-		return nil
+func resolveRef(rootSchema map[string]any, ref string) (map[string]any, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("unresolved ref %q", ref)
 	}
+	if ref[0] != '#' {
+		return nil, fmt.Errorf("unsupported ref %q", ref)
+	}
+
+	originalRef := ref
 	ref = ref[1:]
 	if ref == "" {
-		return nil
+		return rootSchema, nil
 	}
 	if ref[0] == '/' {
 		ref = ref[1:]
@@ -495,7 +603,7 @@ func resolveRef(rootSchema map[string]any, ref string) map[string]any {
 		}
 		if defs != nil {
 			if sub, ok := defs[parts[1]].(map[string]any); ok {
-				return sub
+				return sub, nil
 			}
 		}
 	}
@@ -505,10 +613,10 @@ func resolveRef(rootSchema map[string]any, ref string) map[string]any {
 			schemas, _ := comp["schemas"].(map[string]any)
 			if schemas != nil {
 				if sub, ok := schemas[parts[2]].(map[string]any); ok {
-					return sub
+					return sub, nil
 				}
 			}
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("unresolved ref %q", originalRef)
 }

@@ -1,7 +1,7 @@
 // Package polymorphic provides JSON serialization for values of different
 // concrete types using a discriminator-based envelope format.
 //
-// Wire format
+// # Wire format
 //
 // The wire format is a JSON object with two fields:
 //   - "$type" (string): the discriminator; must be non-empty and must have
@@ -11,9 +11,10 @@
 //
 // Unknown top-level keys are ignored when unmarshaling.
 //
-// Global state
+// # Global state
 //
 // Types register themselves under a discriminator string. Some types (for
 // example PolymorphicPage) register in init() when the package is imported.
-// Tests that require a clean registry should call ClearRegistry().
+// Tests that require a clean registry should call ClearRegistry(), which
+// removes custom registrations and restores the package defaults.
 package polymorphic

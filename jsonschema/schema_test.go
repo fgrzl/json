@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -994,6 +995,73 @@ func TestShouldIgnoreNilSchemaInRegistration(t *testing.T) {
 	})
 }
 
+func TestShouldRestoreBuiltinsAndRemoveCustomSchemasWhenRegistryCleared(t *testing.T) {
+	// Arrange
+	type CustomType struct {
+		Field string `json:"field"`
+	}
+	customSchema := map[string]any{
+		"type":        "object",
+		"description": "Custom registered schema",
+	}
+
+	// Act
+	RegisterSchema(reflect.TypeOf(CustomType{}), customSchema)
+	ClearRegistry()
+
+	// Assert
+	assertSchema(t, CustomType{}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{"type": "string"},
+		},
+	})
+	assertSchema(t, uuid.UUID{}, map[string]any{
+		"type":   "string",
+		"format": "uuid",
+	})
+}
+
+func TestShouldAllowConcurrentRegistryAccess(t *testing.T) {
+	// Arrange
+	type CustomType struct {
+		Field string `json:"field"`
+	}
+	customSchema := map[string]any{
+		"type":        "object",
+		"description": "Custom registered schema",
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	t.Cleanup(ClearRegistry)
+
+	// Act
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 50; j++ {
+				switch worker % 3 {
+				case 0:
+					RegisterSchema(reflect.TypeOf(CustomType{}), customSchema)
+				case 1:
+					_ = GenerateSchema(reflect.TypeOf(CustomType{}))
+				default:
+					ClearRegistry()
+				}
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	// Assert
+	RegisterSchema(reflect.TypeOf(CustomType{}), customSchema)
+	assertSchema(t, CustomType{}, customSchema)
+}
+
 func TestShouldGenerateSchemaFromGenericFunction(t *testing.T) {
 	// Arrange
 	type TestStruct struct {
@@ -1088,15 +1156,7 @@ func TestShouldMarshalJSONInOrder(t *testing.T) {
 
 	// Assert
 	assert.NoError(t, err)
-
-	// Parse back to verify order (though JSON itself doesn't guarantee order,
-	// we can at least verify it's valid JSON with correct values)
-	var result map[string]any
-	err = json.Unmarshal(jsonBytes, &result)
-	assert.NoError(t, err)
-	assert.Equal(t, "last", result["z"])
-	assert.Equal(t, "first", result["a"])
-	assert.Equal(t, "middle", result["m"])
+	assert.Equal(t, `{"z":"last","a":"first","m":"middle"}`, string(jsonBytes))
 }
 
 func TestShouldMarshalYAMLInOrder(t *testing.T) {

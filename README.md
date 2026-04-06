@@ -6,7 +6,7 @@
 This repository contains small, focused Go packages for common JSON tasks:
 
 - **jsonschema** — generate JSON Schema from Go types and validate JSON-like data against those schemas (draft 2019-09).
-- **jsonpatch** — compute and apply RFC 6902 JSON Patch operations (add, remove, replace, move).
+- **jsonpatch** — compute and apply RFC 6902 JSON Patch operations for object-root JSON documents.
 - **polymorphic** — register and marshal/unmarshal polymorphic types using a discriminator envelope.
 
 ## Quick start
@@ -39,18 +39,19 @@ package main
 import (
   "encoding/json"
   "fmt"
+  "reflect"
   "github.com/fgrzl/json/jsonschema"
 )
 
 func main() {
   b := jsonschema.NewBuilder()
-  s := b.Schema(struct{ Name string `json:"name"` }{})
+  s := b.Schema(reflect.TypeOf(struct{ Name string `json:"name"` }{}))
   out, _ := json.MarshalIndent(s, "", "  ")
   fmt.Println(string(out))
 }
 ```
 
-Use `Validate(schema, data)` to check decoded JSON (maps, slices, primitives) against a generated schema. See `docs/jsonschema.md` for validation, components, self-referential types, nullable fields, and tags.
+Use `Validate(schema, data)` to check decoded JSON (maps, slices, primitives) against a generated schema. Validation covers same-document refs, composite keywords, conditional branches, and generator-emitted constraints such as `multipleOf`, `minProperties`, `patternProperties`, and `contains`. See `docs/jsonschema.md` for components, self-referential types, nullable fields, and tags.
 
 ## jsonpatch — quick start
 
@@ -82,7 +83,7 @@ func main() {
 }
 ```
 
-See `docs/jsonpatch.md` for advanced scenarios: array heuristics, patch hydration, and handling for values like `uuid.UUID` and `time.Time` that marshal differently from their internal Go representation.
+See `docs/jsonpatch.md` for advanced scenarios: array heuristics, object-root empty-path behavior, patch hydration, and handling for values like `uuid.UUID` and `time.Time` that marshal differently from their internal Go representation.
 
 ## polymorphic — quick start
 
@@ -92,7 +93,6 @@ Register a concrete type and (un)marshal via the envelope:
 package main
 
 import (
-  "encoding/json"
   "fmt"
   "github.com/fgrzl/json/polymorphic"
 )
@@ -104,12 +104,11 @@ func (p *Person) GetDiscriminator() string { return "person" }
 func init() { polymorphic.RegisterType[Person]() }
 
 func main() {
-  env := polymorphic.NewEnvelope("person", &Person{Name: "Alice"})
-  data, _ := polymorphic.MarshalPolymorphicJSON(env)
+  data, _ := polymorphic.MarshalPolymorphicJSON(&Person{Name: "Alice"})
 
-  inst, err := polymorphic.UnmarshalPolymorphicJSON(data)
+  env, err := polymorphic.UnmarshalPolymorphicJSON(data)
   if err != nil { panic(err) }
-  person := inst.(*Person)
+  person := env.Content.(*Person)
   fmt.Println(person.Name)
 }
 ```

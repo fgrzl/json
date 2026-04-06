@@ -5,9 +5,10 @@ Summary
 
 The `polymorphic` package marshals and unmarshals polymorphic JSON using a discriminator
 envelope: a top-level object with `$type` (discriminator) and `content` (payload).
-Register types with `RegisterType[T]()` or `Register(discriminator, factory)`; use
-`MarshalPolymorphicJSON` / `UnmarshalPolymorphicJSON` for the wire format. See package
-`doc.go` for the full contract (wire format, global registry, ClearRegistry).
+Register types with `RegisterType[T]()` or `Register(func() *MyType { ... })`; use
+`RegisterWithDiscriminator` when you need an explicit discriminator-to-factory mapping.
+Use `MarshalPolymorphicJSON` / `UnmarshalPolymorphicJSON` for the wire format. See
+package `doc.go` for the full contract (wire format, global registry, ClearRegistry).
 
 Try it
 ------
@@ -18,7 +19,6 @@ Registering a type and decoding an envelope at runtime:
 package main
 
 import (
-    "encoding/json"
     "fmt"
 
     "github.com/fgrzl/json/polymorphic"
@@ -35,15 +35,14 @@ func init() {
 }
 
 func main() {
-    // Example envelope JSON that contains a discriminator and content
-    raw := []byte(`{"discriminator":"person","content":{"name":"Alice"}}`)
+    raw := []byte(`{"$type":"person","content":{"name":"Alice"}}`)
 
-    inst, err := polymorphic.UnmarshalPolymorphicJSON(raw)
+    envelope, err := polymorphic.UnmarshalPolymorphicJSON(raw)
     if err != nil {
         panic(err)
     }
 
-    person, ok := inst.(*Person)
+    person, ok := envelope.Content.(*Person)
     if !ok {
         panic("unexpected type")
     }
@@ -54,8 +53,9 @@ func main() {
 Notes
 -----
 
-- Use `RegisterType[T]()` or `Register(discriminator, factory)` to register types.
-- The registry is process-wide global state; call `ClearRegistry()` in tests to avoid leakage.
+- Use `RegisterType[T]()` or `Register(func() *MyType { ... })` to register types.
+- Use `RegisterWithDiscriminator` when you need an explicit discriminator string.
+- The registry is process-wide global state; call `ClearRegistry()` in tests to remove custom registrations and restore package defaults.
 
 Advanced scenarios
 ------------------
@@ -64,11 +64,11 @@ Advanced scenarios
 
 By default types registered with `RegisterType[T]()` use the discriminator returned
 by the `GetDiscriminator()` method on the value. If you need a different mapping
-you can use `Register(discriminator, factory)` to register an explicit factory.
+you can use `RegisterWithDiscriminator(discriminator, factory)` to register an explicit factory.
 
 2) Envelope formats
 
-The package expects an envelope with a `discriminator` field and `content` field by
+The package expects an envelope with a `$type` field and `content` field by
 default. If you have a different envelope shape, create a thin adapter that
 extracts the discriminator and raw content, then call `CreateInstance`/`LoadFactory`
 or `UnmarshalPolymorphicJSON` with the adapted bytes.
@@ -82,13 +82,14 @@ or `UnmarshalPolymorphicJSON` with the adapted bytes.
 
 4) Thread-safety and global state
 
-The registry is a global map of factories. Mutating the registry concurrently is
-not safe; register all types during program initialization when possible.
+The registry is process-wide global state. Concurrent registration, lookup, and
+reset are synchronized, but registrations still affect the whole process, so it
+is best to register application types during initialization when possible.
 
 5) Example: custom factory and dynamic creation
 
 ```go
-polymorphic.Register("custom-user", func() any { return &User{} })
+polymorphic.RegisterWithDiscriminator("custom-user", func() any { return &User{} })
 inst, err := polymorphic.CreateInstance("custom-user")
 // inst will be an empty *User
 ```

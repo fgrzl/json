@@ -271,26 +271,30 @@ func TestLoadFactoryShouldHandleErrorCases(t *testing.T) {
 	assert.ErrorContains(t, err, "type \"nonexistent\" is not registered", "Error should mention unregistered type")
 }
 
-func TestShouldRemoveAllTypesWhenRegistryCleared(t *testing.T) {
-	// Arrange: Register multiple types
+func TestShouldRestoreDefaultTypesWhenRegistryCleared(t *testing.T) {
+	// Arrange: Register multiple custom types alongside the package defaults.
 	ClearRegistry()
 	RegisterType[Person]()
 	RegisterType[Car]()
 
-	// Verify they're registered
+	// Verify the custom and default registrations exist.
 	_, err1 := LoadFactory("person")
 	_, err2 := LoadFactory("car")
+	_, err3 := LoadFactory("mesh://pages/page")
 	assert.NoError(t, err1, "Person should be registered")
 	assert.NoError(t, err2, "Car should be registered")
+	assert.NoError(t, err3, "PolymorphicPage should be registered by default")
 
 	// Act: Clear registry
 	ClearRegistry()
 
-	// Assert: Both should be gone
+	// Assert: Custom registrations should be gone, but defaults should remain.
 	_, err1 = LoadFactory("person")
 	_, err2 = LoadFactory("car")
+	_, err3 = LoadFactory("mesh://pages/page")
 	assert.Error(t, err1, "Person should be unregistered after clear")
 	assert.Error(t, err2, "Car should be unregistered after clear")
+	assert.NoError(t, err3, "PolymorphicPage should remain registered after clear")
 }
 
 func TestRegisterShouldSupportCustomFactory(t *testing.T) {

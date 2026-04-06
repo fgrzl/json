@@ -5,7 +5,6 @@
 package jsonschema
 
 import (
-	"log/slog"
 	"reflect"
 	"strings"
 
@@ -87,11 +86,6 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 		t = t.Elem()
 	}
 
-	name := t.Name()
-	if name != "" {
-		slog.Info("generate schema", "type", name)
-	}
-
 	if schema, ok := getRegisteredSchema(t); ok {
 		return schema
 	}
@@ -140,10 +134,6 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
 	if t == nil {
 		panic("reflect.Type must not be nil")
-	}
-	name := t.Name()
-	if name != "" {
-		slog.Info("generate schema", "type", name)
 	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()

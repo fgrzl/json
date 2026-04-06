@@ -459,3 +459,191 @@ func TestValidateRoundtripGeneratedSchemaWithInvalidData(t *testing.T) {
 	require.ErrorAs(t, err, &verr)
 	assert.GreaterOrEqual(t, len(verr.Errors()), 1)
 }
+
+func TestValidateEnumWithoutTypeFailsWhenNotInList(t *testing.T) {
+	schema := map[string]any{EnumKey: []any{"a", "b", "c"}}
+	err := Validate(schema, "d")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "enum")
+}
+
+func TestValidateConstWithoutTypeFailsWhenNotEqual(t *testing.T) {
+	schema := map[string]any{ConstKey: "only"}
+	err := Validate(schema, "other")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "const")
+}
+
+func TestValidateRefFailsWhenUnresolved(t *testing.T) {
+	schema := map[string]any{
+		RefKey:  "#/$defs/Missing",
+		DefsKey: map[string]any{},
+	}
+	err := Validate(schema, "value")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unresolved ref")
+}
+
+func TestValidateRefAppliesSiblingConstraints(t *testing.T) {
+	schema := map[string]any{
+		RefKey:     "#/$defs/Text",
+		PatternKey: `^[a-z]+$`,
+		DefsKey: map[string]any{
+			"Text": map[string]any{TypeKey: TypeString},
+		},
+	}
+	err := Validate(schema, "abc123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pattern")
+}
+
+func TestValidateAllOfAppliesSiblingConstraints(t *testing.T) {
+	schema := map[string]any{
+		AllOfKey: []any{
+			map[string]any{TypeKey: TypeString},
+		},
+		PatternKey: `^[a-z]+$`,
+	}
+	err := Validate(schema, "abc123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pattern")
+}
+
+func TestValidateMinItemsAppliesWithoutItemsSchema(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:     TypeArray,
+		MinItemsKey: 2.0,
+	}
+	err := Validate(schema, []any{"a"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minItems")
+}
+
+func TestValidateUniqueItemsAppliesWithoutItemsSchema(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:        TypeArray,
+		UniqueItemsKey: true,
+	}
+	err := Validate(schema, []any{"a", "a"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "uniqueItems")
+}
+
+func TestValidateUniqueItemsFailsForDuplicateObjects(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:        TypeArray,
+		UniqueItemsKey: true,
+	}
+	err := Validate(schema, []any{
+		map[string]any{"a": 1.0},
+		map[string]any{"a": 1.0},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "uniqueItems")
+}
+
+func TestValidateMultipleOfFailsWhenValueIsNotMultiple(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:       TypeNumber,
+		MultipleOfKey: 2.0,
+	}
+	err := Validate(schema, 7.0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple")
+}
+
+func TestValidateMinPropertiesFailsWhenTooFew(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:          TypeObject,
+		MinPropertiesKey: 2,
+	}
+	err := Validate(schema, map[string]any{"a": "ok"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minProperties")
+}
+
+func TestValidateMaxPropertiesFailsWhenTooMany(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:          TypeObject,
+		MaxPropertiesKey: 1,
+	}
+	err := Validate(schema, map[string]any{"a": "ok", "b": "extra"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maxProperties")
+}
+
+func TestValidatePatternPropertiesAppliesMatchingSchemas(t *testing.T) {
+	schema := map[string]any{
+		TypeKey: TypeObject,
+		PatternPropertiesKey: map[string]any{
+			`^x-`: map[string]any{TypeKey: TypeInteger},
+		},
+	}
+	err := Validate(schema, map[string]any{"x-id": "not-an-int"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/x-id")
+}
+
+func TestValidateContainsFailsWhenNoItemsMatch(t *testing.T) {
+	schema := map[string]any{
+		TypeKey: TypeArray,
+		ContainsKey: map[string]any{
+			TypeKey: TypeInteger,
+		},
+	}
+	err := Validate(schema, []any{"a", "b"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contains")
+}
+
+func TestValidateIfThenAppliesThenSchemaWhenConditionMatches(t *testing.T) {
+	schema := map[string]any{
+		IfKey: map[string]any{
+			RequiredKey: []any{"kind"},
+			PropertiesKey: map[string]any{
+				"kind": map[string]any{ConstKey: "person"},
+			},
+		},
+		ThenKey: map[string]any{
+			RequiredKey: []any{"name"},
+			PropertiesKey: map[string]any{
+				"name": map[string]any{TypeKey: TypeString},
+			},
+		},
+		ElseKey: map[string]any{
+			RequiredKey: []any{"model"},
+			PropertiesKey: map[string]any{
+				"model": map[string]any{TypeKey: TypeString},
+			},
+		},
+	}
+	err := Validate(schema, map[string]any{"kind": "person"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
+func TestValidateIfThenElseAppliesElseSchemaWhenConditionFails(t *testing.T) {
+	schema := map[string]any{
+		IfKey: map[string]any{
+			RequiredKey: []any{"kind"},
+			PropertiesKey: map[string]any{
+				"kind": map[string]any{ConstKey: "person"},
+			},
+		},
+		ThenKey: map[string]any{
+			RequiredKey: []any{"name"},
+			PropertiesKey: map[string]any{
+				"name": map[string]any{TypeKey: TypeString},
+			},
+		},
+		ElseKey: map[string]any{
+			RequiredKey: []any{"model"},
+			PropertiesKey: map[string]any{
+				"model": map[string]any{TypeKey: TypeString},
+			},
+		},
+	}
+	err := Validate(schema, map[string]any{"kind": "car"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model")
+}

@@ -572,17 +572,71 @@ func TestShouldReturnErrorWhenApplyingUnsupportedOperation(t *testing.T) {
 	assert.ErrorContains(t, err, "unsupported op: invalid_op")
 }
 
-func TestShouldReturnErrorWhenApplyingPatchWithEmptyPath(t *testing.T) {
+func TestShouldReplaceDocumentRootWhenApplyingAddPatchWithEmptyPath(t *testing.T) {
 	// Arrange
 	original := map[string]any{"key": "value"}
-	patches := []Patch{{Op: "add", Path: "", Value: "value"}} // Empty path
+	patches := []Patch{{Op: "add", Path: "", Value: map[string]any{"fresh": "value"}}}
 
 	// Act
 	result, err := ApplyPatch(original, patches)
 
 	// Assert
-	assert.Error(t, err, "Should error on empty path")
-	assert.Nil(t, result, "Result should be nil on error")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"fresh": "value"}, result)
+}
+
+func TestShouldReplaceDocumentRootWhenApplyingReplacePatchWithEmptyPath(t *testing.T) {
+	// Arrange
+	original := map[string]any{"key": "value"}
+	patches := []Patch{{Op: "replace", Path: "", Value: map[string]any{"fresh": "value"}}}
+
+	// Act
+	result, err := ApplyPatch(original, patches)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"fresh": "value"}, result)
+}
+
+func TestShouldTestDocumentRootWhenApplyingPatchWithEmptyPath(t *testing.T) {
+	// Arrange
+	original := map[string]any{"key": "value"}
+	patches := []Patch{{Op: "test", Path: "", Value: map[string]any{"key": "value"}}}
+
+	// Act
+	result, err := ApplyPatch(original, patches)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, original, result)
+}
+
+func TestShouldReturnErrorWhenReplacingDocumentRootWithScalar(t *testing.T) {
+	// Arrange
+	original := map[string]any{"key": "value"}
+	patches := []Patch{{Op: "replace", Path: "", Value: "value"}}
+
+	// Act
+	result, err := ApplyPatch(original, patches)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorContains(t, err, "document root must be an object")
+}
+
+func TestShouldReturnErrorWhenRemovingDocumentRoot(t *testing.T) {
+	// Arrange
+	original := map[string]any{"key": "value"}
+	patches := []Patch{{Op: "remove", Path: ""}}
+
+	// Act
+	result, err := ApplyPatch(original, patches)
+
+	// Assert
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorContains(t, err, "cannot remove document root")
 }
 
 func TestShouldReturnErrorWhenApplyingMoveWithEmptyFromPath(t *testing.T) {
@@ -1821,11 +1875,11 @@ func TestShouldApplyPatchCorrectlyGivenEdgeCaseInputsWhenApplyingPatches(t *test
 		},
 		// Path format
 		{
-			name:        "Empty_path",
+			name:        "Empty_path_requires_object_root_value",
 			doc:         map[string]any{"foo": "bar"},
 			patch:       []Patch{{Op: "add", Path: "", Value: "x"}},
 			wantErr:     true,
-			errContains: "empty path",
+			errContains: "document root must be an object",
 		},
 		{
 			name:    "Add_at_root",

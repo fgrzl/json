@@ -3,12 +3,12 @@ package jsonschema
 import (
 	"database/sql"
 	"encoding/json"
-	"log/slog"
 	"net"
 	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,7 +79,7 @@ func builtinSchemas() map[reflect.Type]map[string]any {
 		// Nullable SQL types
 		reflect.TypeOf(sql.NullString{}):  {TypeKey: []any{TypeString, "null"}},
 		reflect.TypeOf(sql.NullInt64{}):   {TypeKey: []any{TypeInteger, "null"}},
-		reflect.TypeOf(sql.NullBool{}):   {TypeKey: []any{TypeBoolean, "null"}},
+		reflect.TypeOf(sql.NullBool{}):    {TypeKey: []any{TypeBoolean, "null"}},
 		reflect.TypeOf(sql.NullFloat64{}): {TypeKey: []any{TypeNumber, "null"}},
 		reflect.TypeOf(sql.NullTime{}): {
 			TypeKey:   []any{TypeString, "null"},
@@ -91,6 +91,8 @@ func builtinSchemas() map[reflect.Type]map[string]any {
 // registeredSchemas maps Go types to their JSON Schema definitions.
 // It is process-wide global state; use ClearRegistry to reset to built-ins only.
 var registeredSchemas = builtinSchemas()
+
+var registeredSchemasMu sync.RWMutex
 
 // rawMessageType is the reflect.Type for json.RawMessage and is used to
 // ensure RawMessage is treated as raw JSON (empty schema) rather than a
@@ -117,14 +119,20 @@ func getRegisteredSchema(t reflect.Type) (map[string]any, bool) {
 
 	// Check for an exact registered schema first (handles named types
 	// like uuid.UUID which may be underlying arrays of bytes).
-	if s, ok := registeredSchemas[t]; ok {
+	registeredSchemasMu.RLock()
+	s, ok := registeredSchemas[t]
+	registeredSchemasMu.RUnlock()
+	if ok {
 		return s, true
 	}
 
 	// If this is a slice/array of bytes (anonymous []byte or [N]byte),
 	// fall back to the []byte registered schema.
 	if (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) && t.Elem().Kind() == reflect.Uint8 {
-		if s, ok := registeredSchemas[reflect.TypeOf([]byte{})]; ok {
+		registeredSchemasMu.RLock()
+		s, ok := registeredSchemas[reflect.TypeOf([]byte{})]
+		registeredSchemasMu.RUnlock()
+		if ok {
 			return s, true
 		}
 	}
@@ -514,23 +522,26 @@ func jsonFieldName(f reflect.StructField) string {
 }
 
 // RegisterSchema registers a custom JSON Schema for a Go type. The registry is
-// process-wide and not safe for concurrent use. To restore the default built-in
-// type set (e.g. in tests), call ClearRegistry.
+// process-wide. To restore the default built-in type set (e.g. in tests), call
+// ClearRegistry.
 func RegisterSchema(t reflect.Type, schema map[string]any) {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 	if schema != nil {
+		registeredSchemasMu.Lock()
 		registeredSchemas[t] = schema
+		registeredSchemasMu.Unlock()
 	}
 }
 
 // ClearRegistry resets the type registry to the default built-in mappings and
 // removes any custom registrations made via RegisterSchema. Intended for tests
-// or process reset. Not safe to call concurrently with schema generation or
-// RegisterSchema.
+// or process reset.
 func ClearRegistry() {
+	registeredSchemasMu.Lock()
 	registeredSchemas = builtinSchemas()
+	registeredSchemasMu.Unlock()
 }
 
 // GenerateSchemaRawMessage returns a JSON Schema as a raw JSON message.
@@ -539,7 +550,6 @@ func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
 	schema := GenerateSchema(t)
 	raw, err := json.Marshal(schema)
 	if err != nil {
-		slog.Error("error marshalling schema", "error", err)
 		return nil
 	}
 	return raw

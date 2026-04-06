@@ -15,16 +15,35 @@ type Polymorphic interface {
 // TypeFactory creates instances of registered types.
 type TypeFactory = func() any
 
-var types sync.Map
+var (
+	registryMu   sync.RWMutex
+	types        = make(map[string]TypeFactory)
+	defaultTypes = make(map[string]TypeFactory)
+)
+
+func registerWithDiscriminator(discriminator string, factory TypeFactory, isDefault bool) {
+	if discriminator == "" {
+		panic("discriminator must be non-empty")
+	}
+
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	types[discriminator] = factory
+	if isDefault {
+		defaultTypes[discriminator] = factory
+	}
+}
+
+func registerDefaultWithDiscriminator(discriminator string, factory TypeFactory) {
+	registerWithDiscriminator(discriminator, factory, true)
+}
 
 // RegisterWithDiscriminator stores a factory function under the given
 // discriminator. The factory should return a pointer to a zero-value
 // instance of the concrete type. It panics if discriminator is empty.
 func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
-	if discriminator == "" {
-		panic("discriminator must be non-empty")
-	}
-	types.Store(discriminator, factory)
+	registerWithDiscriminator(discriminator, factory, false)
 }
 
 // Register registers a factory for a Polymorphic type using a factory
@@ -34,7 +53,13 @@ func RegisterWithDiscriminator(discriminator string, factory TypeFactory) {
 func Register[T Polymorphic](factory func() T) {
 	instance := factory()
 	discriminator := instance.GetDiscriminator()
-	RegisterWithDiscriminator(discriminator, func() any { return factory() })
+	registerWithDiscriminator(discriminator, func() any { return factory() }, false)
+}
+
+func registerDefault[T Polymorphic](factory func() T) {
+	instance := factory()
+	discriminator := instance.GetDiscriminator()
+	registerWithDiscriminator(discriminator, func() any { return factory() }, true)
 }
 
 func ctor[T any]() func() *T { return func() *T { return new(T) } }
@@ -57,39 +82,62 @@ func RegisterType[T any]() {
 	})
 }
 
+func registerDefaultType[T any]() {
+	factory := ctor[T]()
+
+	instance := factory()
+	if _, ok := any(instance).(Polymorphic); !ok {
+		panic(fmt.Sprintf("type %T does not implement Polymorphic interface", instance))
+	}
+
+	registerDefault(func() Polymorphic {
+		return any(factory()).(Polymorphic)
+	})
+}
+
 // CreateInstance creates a new instance for the given discriminator.
 // It returns the instance as a Polymorphic interface or an error if the
 // discriminator is not registered.
 func CreateInstance(discriminator string) (Polymorphic, error) {
-	if factory, ok := types.Load(discriminator); ok {
-		instance := factory.(TypeFactory)()
-		typedInstance, ok := instance.(Polymorphic)
-		if !ok {
-			return nil, fmt.Errorf("invalid instance type for %q", discriminator)
-		}
-		return typedInstance, nil
+	factory, err := LoadFactory(discriminator)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("type %q is not registered", discriminator)
+
+	instance := factory()
+	typedInstance, ok := instance.(Polymorphic)
+	if !ok {
+		return nil, fmt.Errorf("invalid instance type for %q", discriminator)
+	}
+	return typedInstance, nil
 }
 
 // LoadFactory returns the factory function registered for the
 // discriminator, or an error if there is none.
 func LoadFactory(discriminator string) (TypeFactory, error) {
-	if factory, ok := types.Load(discriminator); ok {
-		typedFactory, ok := factory.(TypeFactory)
-		if !ok {
-			return nil, fmt.Errorf("invalid factory type for %q", discriminator)
-		}
-		return typedFactory, nil
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	if factory, ok := types[discriminator]; ok {
+		return factory, nil
 	}
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
 }
 
-// ClearRegistry removes all registered factories. Useful in tests to
-// reset global state.
+func cloneFactories(source map[string]TypeFactory) map[string]TypeFactory {
+	cloned := make(map[string]TypeFactory, len(source))
+	for discriminator, factory := range source {
+		cloned[discriminator] = factory
+	}
+	return cloned
+}
+
+// ClearRegistry resets the registry to the package default factories.
+// Useful in tests to remove custom registrations without leaving the
+// package in a partially uninitialized state.
 func ClearRegistry() {
-	types.Range(func(k, v any) bool {
-		types.Delete(k)
-		return true
-	})
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	types = cloneFactories(defaultTypes)
 }

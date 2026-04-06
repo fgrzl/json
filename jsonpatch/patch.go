@@ -151,6 +151,21 @@ func ApplyPatch(original any, patches []Patch) (map[string]any, error) {
 	return target, nil
 }
 
+func replaceRootObject(target map[string]any, value any) error {
+	rootValue, err := toMap(value)
+	if err != nil {
+		return fmt.Errorf("document root must be an object: %w", err)
+	}
+
+	for key := range target {
+		delete(target, key)
+	}
+	for key, item := range deepCopy(rootValue) {
+		target[key] = item
+	}
+	return nil
+}
+
 // ApplyPatchAndHydrate applies patches to `original` and unmarshals the
 // resulting document into `updated` (which should be a pointer). This is
 // a convenience for applying patches and then hydrating a typed value.
@@ -569,7 +584,7 @@ func escapePathSegment(seg string) string {
 // parsePath splits a JSON pointer path into its components and unescapes each segment.
 func parsePath(path string) ([]string, error) {
 	if path == "" {
-		return nil, fmt.Errorf("empty path")
+		return []string{}, nil
 	}
 	trimmed := strings.Trim(path, "/")
 	parts := strings.Split(trimmed, "/")
@@ -695,6 +710,10 @@ func traverseToParentWithBounds(target map[string]any, parts []string, strictBou
 	return parent, parts[len(parts)-1], false, -1, nil
 } // applyAdd applies an "add" operation at the given path with the specified value.
 func applyAdd(target map[string]any, parts []string, value any) error {
+	if len(parts) == 0 {
+		return replaceRootObject(target, value)
+	}
+
 	// Special handling for a two-part path that targets an array (including /key/- for append).
 	if len(parts) == 2 {
 		if arr, ok := target[parts[0]].([]any); ok {
@@ -762,6 +781,10 @@ func insertIntoSlice(parent map[string]any, key string, index int, value any) er
 // applyRemove applies a "remove" operation at the given path.
 // RFC 6902 compliance: Must fail if the path does not exist.
 func applyRemove(target map[string]any, parts []string) error {
+	if len(parts) == 0 {
+		return fmt.Errorf("cannot remove document root")
+	}
+
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
 		arr, ok := target[key].([]any)
 		if !ok {
@@ -803,6 +826,10 @@ func removeFromSlice(parent map[string]any, key string, index int) error {
 // applyReplace applies a "replace" operation at the given path.
 // RFC 6902 compliance: Must fail if the path does not exist.
 func applyReplace(target map[string]any, parts []string, value any) error {
+	if len(parts) == 0 {
+		return replaceRootObject(target, value)
+	}
+
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
 		arr, ok := target[key].([]any)
 		if !ok {
@@ -860,6 +887,10 @@ func isProperPrefix(a, b []string) bool {
 // RFC 6902 compliance: Must fail if the "from" path does not exist.
 // RFC 6902 §4.4: from MUST NOT be a proper prefix of path.
 func applyMove(target map[string]any, fromParts, toParts []string) error {
+	if len(fromParts) == 0 || len(toParts) == 0 {
+		return fmt.Errorf("move involving document root is not supported")
+	}
+
 	if isProperPrefix(fromParts, toParts) {
 		return fmt.Errorf("move failed: from path is a proper prefix of target path")
 	}
@@ -915,6 +946,10 @@ func getFromSlice(parent map[string]any, key string, index int) (any, bool) {
 // getValue retrieves the value at the given path parts from the target document.
 // Returns (value, true) if found, (nil, false) otherwise.
 func getValue(target map[string]any, parts []string) (any, bool) {
+	if len(parts) == 0 {
+		return target, true
+	}
+
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
 		arr := target[key].([]any)
 		return arr[idx], true
@@ -933,6 +968,16 @@ func getValue(target map[string]any, parts []string) (any, bool) {
 // applyTest checks that the value at the target path equals the expected value.
 // RFC 6902 §4.6: the test fails if the value doesn't match.
 func applyTest(target map[string]any, parts []string, expected any) error {
+	if len(parts) == 0 {
+		if normalizedExpected, err := toMap(expected); err == nil {
+			expected = normalizedExpected
+		}
+		if !reflect.DeepEqual(target, expected) {
+			return fmt.Errorf("test failed: value at document root is %v, expected %v", target, expected)
+		}
+		return nil
+	}
+
 	actual, exists := getValue(target, parts)
 	if !exists {
 		return fmt.Errorf("test failed: path %s does not exist", strings.Join(parts, "/"))
