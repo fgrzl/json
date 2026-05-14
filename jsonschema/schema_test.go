@@ -292,6 +292,34 @@ func TestShouldGenerateTimeSchemaGivenTimeType(t *testing.T) {
 	})
 }
 
+func TestShouldKeepTaggedTimeSchemasIsolatedAcrossFields(t *testing.T) {
+	type Example struct {
+		ExpiresAt time.Time  `json:"expires_at" description:"When the client credential expires"`
+		RevokedAt *time.Time `json:"revoked_at" description:"When the client was revoked"`
+	}
+
+	assertSchema(t, Example{}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"expires_at": map[string]any{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "When the client credential expires",
+			},
+			"revoked_at": map[string]any{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "When the client was revoked",
+			},
+		},
+	})
+
+	assertSchema(t, time.Time{}, map[string]any{
+		"type":   "string",
+		"format": "date-time",
+	})
+}
+
 func TestShouldGenerateByteSchemaGivenByteSliceType(t *testing.T) {
 	assertSchema(t, []byte{}, map[string]any{
 		"type":   "string",
@@ -977,6 +1005,31 @@ func TestShouldHandlePointerTypeInRegistration(t *testing.T) {
 	ClearRegistry()
 }
 
+func TestShouldRegisterSelfReferentialSchemaWithoutRecursion(t *testing.T) {
+	// Arrange
+	type CustomType struct{}
+	customSchema := map[string]any{
+		"type": "object",
+	}
+	customSchema[PropertiesKey] = map[string]any{
+		"self": customSchema,
+	}
+
+	t.Cleanup(ClearRegistry)
+
+	// Act
+	assert.NotPanics(t, func() {
+		RegisterSchema(reflect.TypeOf(CustomType{}), customSchema)
+	})
+
+	// Assert
+	generated := GenerateSchema(reflect.TypeOf(CustomType{}))
+	assert.Equal(t, "object", generated["type"])
+	properties, ok := generated[PropertiesKey].(map[string]any)
+	assert.True(t, ok)
+	assert.Contains(t, properties, "self")
+}
+
 func TestShouldIgnoreNilSchemaInRegistration(t *testing.T) {
 	// Arrange
 	type CustomType struct {
@@ -1335,7 +1388,8 @@ func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
 	}
 
 	type Sub struct {
-		Base  `json:",inline"`
+		Base `json:",inline"`
+
 		Other string `json:"other"`
 	}
 
@@ -1363,12 +1417,13 @@ func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
 
 func TestShouldNotInlineAnonymousEmbeddedStructWhenNoInlineTag(t *testing.T) {
 	type Base struct {
-		CredentialID uuid.UUID `json:"credential_id" componentId:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
+		CredentialID uuid.UUID `json:"credential_id" x-component-id:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
 		Tenant       string    `json:"tenant" title:"Tenant ID" description:"Azure tenant (directory) identifier used for authentication"`
 	}
 
 	type Sub struct {
 		Base
+
 		Other string `json:"other"`
 	}
 

@@ -82,7 +82,7 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 	}
 	// For the root type, we want the actual schema, not a reference
 	// But we should still generate components for nested types
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -135,7 +135,7 @@ func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
 	if t == nil {
 		panic("reflect.Type must not be nil")
 	}
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -175,121 +175,10 @@ func (b *Builder) structSchema(t reflect.Type, useRef bool) map[string]any {
 	var required []string
 
 	if p, ok := reflect.New(t).Interface().(polymorphic.Polymorphic); ok {
-		schema["$id"] = p.GetDiscriminator()
+		schema[IDKey] = p.GetDiscriminator()
 	}
 
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if field.PkgPath != "" || jsonFieldName(field) == "-" {
-			continue
-		}
-
-		name := jsonFieldName(field)
-
-		if ref := field.Tag.Get(RefKey); ref != "" {
-			properties[name] = map[string]any{RefKey: ref}
-			continue
-		}
-
-		ft := field.Type
-		ftKind := ft.Kind()
-
-		// Unwrap to get base type
-		baseType := ft
-		baseKind := baseType.Kind()
-		for baseKind == reflect.Ptr || baseKind == reflect.Slice || baseKind == reflect.Array || baseKind == reflect.Map {
-			baseType = baseType.Elem()
-			baseKind = baseType.Kind()
-		}
-
-		refName := baseType.Name()
-
-		// If this is an anonymous embedded struct and the json tag contains "inline",
-		// merge its properties and required fields into the parent schema rather
-		// than emitting a nested property. This supports YAML-style `inline` usage
-		// while preserving the Go type definitions.
-		if field.Anonymous && baseKind == reflect.Struct {
-			jsonTag := field.Tag.Get(JSONTag)
-			if jsonTag != "" && strings.Contains(jsonTag, "inline") {
-				embedded := b.schemaInternal(baseType, false)
-				if props, ok := embedded[PropertiesKey].(map[string]any); ok {
-					for k, v := range props {
-						if _, exists := properties[k]; !exists {
-							properties[k] = v
-						}
-					}
-				}
-
-				// merge required
-				if reqv, ok := embedded[RequiredKey].([]string); ok {
-					required = append(required, reqv...)
-				} else if reqv2, ok := embedded[RequiredKey].([]any); ok {
-					for _, it := range reqv2 {
-						if s, ok := it.(string); ok {
-							required = append(required, s)
-						}
-					}
-				}
-				continue
-			}
-		}
-
-		// Generate component if eligible
-		if useRef && refName != "" && isEligibleForRef(baseType) {
-			// Check for circular reference - if this field type is the same as our current type
-			if baseType == t {
-				// This is a circular reference, use a direct reference
-				ref := map[string]any{RefKey: "#/components/schemas/" + refName}
-				switch ftKind {
-				case reflect.Slice, reflect.Array:
-					properties[name] = map[string]any{
-						TypeKey:  TypeArray,
-						ItemsKey: ref,
-					}
-				case reflect.Map:
-					properties[name] = map[string]any{
-						TypeKey:                 TypeObject,
-						AdditionalPropertiesKey: ref,
-					}
-				default:
-					properties[name] = ref
-				}
-				continue
-			}
-
-			if _, exists := b.components[refName]; !exists {
-				refSchema := b.schemaInternal(baseType, useRef)
-				b.components[refName] = refSchema
-			}
-
-			ref := map[string]any{RefKey: "#/components/schemas/" + refName}
-
-			switch ftKind {
-			case reflect.Slice, reflect.Array:
-				properties[name] = map[string]any{
-					TypeKey:  TypeArray,
-					ItemsKey: ref,
-				}
-			case reflect.Map:
-				properties[name] = map[string]any{
-					TypeKey:                 TypeObject,
-					AdditionalPropertiesKey: ref,
-				}
-			default:
-				properties[name] = ref
-			}
-			continue
-		}
-
-		fieldSchema := b.schemaInternal(field.Type, useRef)
-		applyFieldTags(field, fieldSchema)
-
-		if field.Tag.Get(RequiredKey) == "true" || field.Tag.Get("binding") == "required" {
-			required = append(required, name)
-		}
-
-		properties[name] = fieldSchema
-	}
+	b.populateStructFields(t, useRef, properties, &required)
 
 	schema[PropertiesKey] = properties
 	if len(required) > 0 {
@@ -299,13 +188,120 @@ func (b *Builder) structSchema(t reflect.Type, useRef bool) map[string]any {
 	return schema
 }
 
+func (b *Builder) populateStructFields(t reflect.Type, useRef bool, properties map[string]any, required *[]string) {
+	for i := 0; i < t.NumField(); i++ {
+		b.populateStructField(t, useRef, properties, required, t.Field(i))
+	}
+}
+
+func (b *Builder) populateStructField(parentType reflect.Type, useRef bool, properties map[string]any, required *[]string, field reflect.StructField) {
+	if field.PkgPath != "" || jsonFieldName(field) == "-" {
+		return
+	}
+
+	name := jsonFieldName(field)
+	if ref := field.Tag.Get(RefKey); ref != "" {
+		properties[name] = map[string]any{RefKey: ref}
+		return
+	}
+
+	ft := field.Type
+	ftKind := ft.Kind()
+	baseType, baseKind := unwrapSchemaType(ft)
+
+	if field.Anonymous && baseKind == reflect.Struct {
+		jsonTag := field.Tag.Get(JSONTag)
+		if jsonTag != "" && strings.Contains(jsonTag, "inline") {
+			b.mergeEmbeddedStruct(properties, required, baseType)
+			return
+		}
+	}
+
+	if useRef && baseType.Name() != "" && isEligibleForRef(baseType) {
+		b.addReferencedStructField(parentType, properties, name, ftKind, baseType, useRef)
+		return
+	}
+
+	fieldSchema := b.schemaInternal(field.Type, useRef)
+	applyFieldTags(field, fieldSchema)
+
+	if field.Tag.Get(RequiredKey) == "true" || field.Tag.Get("binding") == "required" {
+		*required = append(*required, name)
+	}
+
+	properties[name] = fieldSchema
+}
+
+func (b *Builder) mergeEmbeddedStruct(properties map[string]any, required *[]string, embeddedType reflect.Type) {
+	embedded := b.schemaInternal(embeddedType, false)
+
+	if props, ok := embedded[PropertiesKey].(map[string]any); ok {
+		for k, v := range props {
+			if _, exists := properties[k]; !exists {
+				properties[k] = v
+			}
+		}
+	}
+
+	switch reqv := embedded[RequiredKey].(type) {
+	case []string:
+		*required = append(*required, reqv...)
+	case []any:
+		for _, item := range reqv {
+			if s, ok := item.(string); ok {
+				*required = append(*required, s)
+			}
+		}
+	}
+}
+
+func (b *Builder) addReferencedStructField(parentType reflect.Type, properties map[string]any, name string, ftKind reflect.Kind, baseType reflect.Type, useRef bool) {
+	refName := baseType.Name()
+	if baseType != parentType {
+		if _, exists := b.components[refName]; !exists {
+			b.components[refName] = b.schemaInternal(baseType, useRef)
+		}
+	}
+
+	b.assignReferenceProperty(properties, name, ftKind, refName)
+}
+
+func (b *Builder) assignReferenceProperty(properties map[string]any, name string, ftKind reflect.Kind, refName string) {
+	ref := map[string]any{RefKey: "#/components/schemas/" + refName}
+
+	switch ftKind {
+	case reflect.Slice, reflect.Array:
+		properties[name] = map[string]any{
+			TypeKey:  TypeArray,
+			ItemsKey: ref,
+		}
+	case reflect.Map:
+		properties[name] = map[string]any{
+			TypeKey:                 TypeObject,
+			AdditionalPropertiesKey: ref,
+		}
+	default:
+		properties[name] = ref
+	}
+}
+
+func unwrapSchemaType(t reflect.Type) (reflect.Type, reflect.Kind) {
+	for {
+		kind := t.Kind()
+		if kind != reflect.Pointer && kind != reflect.Slice && kind != reflect.Array && kind != reflect.Map {
+			return t, kind
+		}
+		t = t.Elem()
+	}
+}
+
 func isEligibleForRef(t reflect.Type) bool {
 	if t == nil {
 		return false
 	}
 
 	// unwrap slices, arrays, and pointers
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
 		t = t.Elem()
 	}
 
@@ -360,7 +356,7 @@ func (b *Builder) hasOnlyPrimitiveFields(t reflect.Type) bool {
 
 		ft := field.Type
 		// Unwrap pointers
-		for ft.Kind() == reflect.Ptr {
+		for ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 
@@ -374,7 +370,7 @@ func (b *Builder) hasOnlyPrimitiveFields(t reflect.Type) bool {
 		case reflect.Slice, reflect.Array:
 			// Check if slice/array of primitives
 			elemType := ft.Elem()
-			for elemType.Kind() == reflect.Ptr {
+			for elemType.Kind() == reflect.Pointer {
 				elemType = elemType.Elem()
 			}
 			switch elemType.Kind() {

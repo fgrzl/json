@@ -200,7 +200,7 @@ func toMap(data any) (map[string]any, error) {
 	}
 
 	v := reflect.ValueOf(data)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return make(map[string]any), nil
 		}
@@ -231,7 +231,7 @@ func structToMap(v reflect.Value, result map[string]any) {
 		// Promote anonymous (embedded) struct fields
 		if field.Anonymous {
 			fv := v.Field(i)
-			if fv.Kind() == reflect.Ptr {
+			if fv.Kind() == reflect.Pointer {
 				if fv.IsNil() {
 					continue
 				}
@@ -285,7 +285,7 @@ func convertValue(data any) any {
 	}
 
 	v := reflect.ValueOf(data)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil
 		}
@@ -553,15 +553,6 @@ func arrayDiff(basePath string, beforeSlice, afterSlice []any) ([]Patch, error) 
 	return append(removals, additions...), nil
 }
 
-// parseIndexFromPath extracts the last segment of a JSON pointer path as an integer.
-func parseIndexFromPath(path string) (int, error) {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) == 0 {
-		return -1, fmt.Errorf("no parts in path: %s", path)
-	}
-	return strconv.Atoi(parts[len(parts)-1])
-}
-
 // unescapePathSegment reverses JSON Pointer encoding per RFC 6901 section 3:
 // ~1 -> /, ~0 -> ~ (order matters).
 func unescapePathSegment(seg string) string {
@@ -633,6 +624,8 @@ func traverseToParentForAdd(target map[string]any, parts []string) (map[string]a
 }
 
 // traverseToParentWithBounds navigates to the parent container with configurable bounds checking.
+//
+//revive:disable:indent-error-flow
 func traverseToParentWithBounds(target map[string]any, parts []string, strictBounds bool) (map[string]any, string, bool, int, error) {
 	parent := target
 	// Iterate through all but the last segment.
@@ -693,9 +686,8 @@ func traverseToParentWithBounds(target map[string]any, parts []string, strictBou
 							parent = m
 							i++ // Skip the index part since we processed it
 							continue
-						} else {
-							return nil, "", false, -1, fmt.Errorf("expected map at array index %d", idx)
 						}
+						return nil, "", false, -1, fmt.Errorf("expected map at array index %d", idx)
 					} else {
 						return nil, "", false, -1, fmt.Errorf("expected numeric index for array access, got %s", parts[i+1])
 					}
@@ -708,7 +700,11 @@ func traverseToParentWithBounds(target map[string]any, parts []string, strictBou
 		}
 	}
 	return parent, parts[len(parts)-1], false, -1, nil
-} // applyAdd applies an "add" operation at the given path with the specified value.
+}
+
+//revive:enable:indent-error-flow
+
+// applyAdd applies an "add" operation at the given path with the specified value.
 func applyAdd(target map[string]any, parts []string, value any) error {
 	if len(parts) == 0 {
 		return replaceRootObject(target, value)

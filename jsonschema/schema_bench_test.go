@@ -26,7 +26,7 @@ type benchNestedItem struct {
 }
 
 type benchNestedStruct struct {
-	ID    string           `json:"id"`
+	ID    string            `json:"id"`
 	Items []benchNestedItem `json:"items"`
 	Meta  benchNestedItem   `json:"meta"`
 }

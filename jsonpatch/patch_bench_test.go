@@ -414,6 +414,7 @@ func BenchmarkToMap_EmbeddedStruct(b *testing.B) {
 	}
 	type Extended struct {
 		Base
+
 		Name  string `json:"name"`
 		Value int    `json:"value"`
 	}

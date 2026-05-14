@@ -3,6 +3,7 @@ package jsonschema
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,6 +80,25 @@ func TestValidateRequiredFailsWhenPropertyMissing(t *testing.T) {
 	assert.Contains(t, verr.Errors()[0].Message, "a")
 }
 
+func TestValidateReportsMultipleMissingRequiredProperties(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:     TypeObject,
+		RequiredKey: []any{"a", "b"},
+		PropertiesKey: map[string]any{
+			"a": map[string]any{TypeKey: TypeString},
+			"b": map[string]any{TypeKey: TypeString},
+		},
+	}
+
+	err := Validate(schema, map[string]any{})
+	require.Error(t, err)
+
+	var verr *ErrValidation
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Errors(), 2)
+	assert.Contains(t, err.Error(), "2 validation error(s)")
+}
+
 func TestValidateRequiredPassesWhenPropertyPresent(t *testing.T) {
 	schema := map[string]any{
 		TypeKey:     TypeObject,
@@ -89,6 +109,18 @@ func TestValidateRequiredPassesWhenPropertyPresent(t *testing.T) {
 	}
 	err := Validate(schema, map[string]any{"a": "ok"})
 	assert.NoError(t, err)
+}
+
+func TestValidateGeneratedSchemaRespectsRequiredTags(t *testing.T) {
+	type Example struct {
+		ID   int    `json:"id" required:"true"`
+		Name string `json:"name"`
+	}
+
+	schema := GenerateSchema(reflect.TypeOf(Example{}))
+	err := Validate(schema, map[string]any{"name": "alice"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required property missing: id")
 }
 
 func TestValidatePropertiesPassesWhenValueMatchesSubschema(t *testing.T) {
@@ -152,6 +184,17 @@ func TestValidateAcceptsNullableTypeGivenNonNull(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestValidateAppliesConstraintsForMatchingUnionType(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:      []any{TypeInteger, TypeString},
+		MinLengthKey: 3,
+	}
+
+	err := Validate(schema, "ab")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minLength")
+}
+
 // Phase 2: Array items and additionalProperties
 
 func TestValidateItemsPassesWhenAllElementsMatch(t *testing.T) {
@@ -198,6 +241,25 @@ func TestValidateAdditionalPropertiesTrueAllowsExtraKeys(t *testing.T) {
 	}
 	err := Validate(schema, map[string]any{"a": "ok", "b": "extra"})
 	assert.NoError(t, err)
+}
+
+func TestValidateAdditionalPropertiesSchemaValidatesExtraKeys(t *testing.T) {
+	schema := map[string]any{
+		TypeKey:                 TypeObject,
+		PropertiesKey:           map[string]any{"a": map[string]any{TypeKey: TypeString}},
+		AdditionalPropertiesKey: map[string]any{TypeKey: TypeInteger},
+	}
+
+	t.Run("accepts matching additional properties", func(t *testing.T) {
+		err := Validate(schema, map[string]any{"a": "ok", "b": 1.0})
+		assert.NoError(t, err)
+	})
+
+	t.Run("rejects mismatching additional properties", func(t *testing.T) {
+		err := Validate(schema, map[string]any{"a": "ok", "b": "bad"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "/b")
+	})
 }
 
 // Phase 3: String/number constraints and enum/const
@@ -260,6 +322,17 @@ func TestValidateEnumPassesWhenInList(t *testing.T) {
 	schema := map[string]any{TypeKey: TypeString, EnumKey: []any{"a", "b", "c"}}
 	err := Validate(schema, "b")
 	assert.NoError(t, err)
+}
+
+func TestValidateGeneratedSchemaRespectsEnumTags(t *testing.T) {
+	type Example struct {
+		State string `json:"state" enum:"new,done"`
+	}
+
+	schema := GenerateSchema(reflect.TypeOf(Example{}))
+	err := Validate(schema, map[string]any{"state": "paused"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "enum")
 }
 
 func TestValidateConstFailsWhenNotEqual(t *testing.T) {
@@ -332,6 +405,38 @@ func TestValidateRefResolvesAndValidates(t *testing.T) {
 	var verr *ErrValidation
 	require.ErrorAs(t, err, &verr)
 	assert.Len(t, verr.Errors(), 1)
+}
+
+func TestValidateGeneratedSchemaRespectsDateTimeFormat(t *testing.T) {
+	schema := GenerateSchema(reflect.TypeOf(time.Time{}))
+	err := Validate(schema, "not-a-date-time")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "format date-time")
+}
+
+func TestValidateFormatRejectsInvalidUuidString(t *testing.T) {
+	schema := map[string]any{TypeKey: TypeString, FormatKey: "uuid"}
+	err := Validate(schema, "not-a-uuid")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "format uuid")
+}
+
+func TestValidateRefResolvesFromComponentsSchemas(t *testing.T) {
+	schema := map[string]any{
+		RefKey: "#/components/schemas/Text",
+		"components": map[string]any{
+			"schemas": map[string]any{
+				"Text": map[string]any{TypeKey: TypeString},
+			},
+		},
+	}
+
+	err := Validate(schema, "hello")
+	assert.NoError(t, err)
+
+	err = Validate(schema, 42.0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected string")
 }
 
 // Phase 5: allOf, anyOf, oneOf, not
@@ -584,6 +689,31 @@ func TestValidatePatternPropertiesAppliesMatchingSchemas(t *testing.T) {
 	assert.Contains(t, err.Error(), "/x-id")
 }
 
+func TestValidatePatternPropertiesAllowsMatchingValues(t *testing.T) {
+	schema := map[string]any{
+		TypeKey: TypeObject,
+		PatternPropertiesKey: map[string]any{
+			`^x-`: map[string]any{TypeKey: TypeInteger},
+		},
+	}
+
+	err := Validate(schema, map[string]any{"x-id": 1.0})
+	assert.NoError(t, err)
+}
+
+func TestValidatePatternPropertiesRejectsInvalidRegex(t *testing.T) {
+	schema := map[string]any{
+		TypeKey: TypeObject,
+		PatternPropertiesKey: map[string]any{
+			"(": map[string]any{TypeKey: TypeString},
+		},
+	}
+
+	err := Validate(schema, map[string]any{"value": "ok"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid patternProperties regex")
+}
+
 func TestValidateContainsFailsWhenNoItemsMatch(t *testing.T) {
 	schema := map[string]any{
 		TypeKey: TypeArray,
@@ -594,6 +724,18 @@ func TestValidateContainsFailsWhenNoItemsMatch(t *testing.T) {
 	err := Validate(schema, []any{"a", "b"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "contains")
+}
+
+func TestValidateContainsPassesWhenAnyItemMatches(t *testing.T) {
+	schema := map[string]any{
+		TypeKey: TypeArray,
+		ContainsKey: map[string]any{
+			TypeKey: TypeInteger,
+		},
+	}
+
+	err := Validate(schema, []any{"a", 1.0})
+	assert.NoError(t, err)
 }
 
 func TestValidateIfThenAppliesThenSchemaWhenConditionMatches(t *testing.T) {

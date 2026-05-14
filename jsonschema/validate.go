@@ -1,11 +1,17 @@
 package jsonschema
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // ValidationError represents a single validation failure at a path.
@@ -139,9 +145,17 @@ func validateAt(root map[string]any, path string, schema map[string]any, data an
 }
 
 func validateExplicitType(root map[string]any, path string, schema map[string]any, typeVal any, data any, errs *[]ValidationError) bool {
-	if typeSlice, ok := typeVal.([]any); ok {
+	switch typed := typeVal.(type) {
+	case string:
+		if !typeMatches(typed, data) {
+			addErr(errs, path, fmt.Sprintf("expected %s, got %s", typed, jsonKind(data)))
+			return false
+		}
+		validateTypeConstraints(root, path, schema, data, errs)
+		return true
+	case []any:
 		matched := false
-		for _, t := range typeSlice {
+		for _, t := range typed {
 			tstr, _ := t.(string)
 			if typeMatches(tstr, data) {
 				matched = true
@@ -149,14 +163,28 @@ func validateExplicitType(root map[string]any, path string, schema map[string]an
 			}
 		}
 		if !matched {
-			addErr(errs, path, fmt.Sprintf("value must be one of types %v", typeSlice))
+			addErr(errs, path, fmt.Sprintf("value must be one of types %v", typed))
+			return false
+		}
+		validateTypeConstraints(root, path, schema, data, errs)
+		return true
+	case []string:
+		matched := false
+		for _, t := range typed {
+			if typeMatches(t, data) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			addErr(errs, path, fmt.Sprintf("value must be one of types %v", typed))
 			return false
 		}
 		validateTypeConstraints(root, path, schema, data, errs)
 		return true
 	}
 
-	typeStr, _ := typeVal.(string)
+	typeStr := fmt.Sprint(typeVal)
 	if !typeMatches(typeStr, data) {
 		addErr(errs, path, fmt.Sprintf("expected %s, got %s", typeStr, jsonKind(data)))
 		return false
@@ -201,17 +229,45 @@ func validateIfThenElse(root map[string]any, path string, schema map[string]any,
 }
 
 func validateTypeConstraints(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
-	typeVal, _ := schema[TypeKey].(string)
-	if typeVal == "" {
-		if slice, ok := schema[TypeKey].([]any); ok {
-			for _, t := range slice {
-				if s, _ := t.(string); s != "" && s != "null" {
-					typeVal = s
-					break
-				}
+	matchedType, ok := matchingSchemaType(schema[TypeKey], data)
+	if !ok {
+		return
+	}
+
+	validateTypeSpecificConstraints(root, path, schema, matchedType, data, errs)
+}
+
+func matchingSchemaType(typeSpec any, data any) (string, bool) {
+	switch typed := typeSpec.(type) {
+	case string:
+		if typeMatches(typed, data) {
+			return typed, true
+		}
+	case []any:
+		for _, candidate := range typed {
+			typeName, _ := candidate.(string)
+			if typeName == "" || typeName == "null" {
+				continue
+			}
+			if typeMatches(typeName, data) {
+				return typeName, true
+			}
+		}
+	case []string:
+		for _, typeName := range typed {
+			if typeName == "" || typeName == "null" {
+				continue
+			}
+			if typeMatches(typeName, data) {
+				return typeName, true
 			}
 		}
 	}
+
+	return "", false
+}
+
+func validateTypeSpecificConstraints(root map[string]any, path string, schema map[string]any, typeVal string, data any, errs *[]ValidationError) {
 	switch typeVal {
 	case TypeObject:
 		if obj, ok := data.(map[string]any); ok {
@@ -238,7 +294,7 @@ func validateObject(root map[string]any, path string, schema map[string]any, obj
 	patternProps := compilePatternProperties(path, schema, errs)
 	matchedByPattern := make(map[string]bool)
 
-	if req, ok := schema[RequiredKey].([]any); ok {
+	if req, ok := schemaAnySlice(schema[RequiredKey]); ok {
 		for _, r := range req {
 			key, _ := r.(string)
 			if key == "" {
@@ -300,6 +356,36 @@ func validateStringConstraints(path string, schema map[string]any, data any, err
 			addErr(errs, path, fmt.Sprintf("string does not match pattern %s", pattern))
 		}
 	}
+	if format, ok := schema[FormatKey].(string); ok && format != "" {
+		validateFormatConstraint(path, format, s, errs)
+	}
+}
+
+func validateFormatConstraint(path, format, value string, errs *[]ValidationError) {
+	switch format {
+	case "date-time":
+		if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+			addErr(errs, path, "string does not match format date-time")
+		}
+	case "uuid":
+		if _, err := uuid.Parse(value); err != nil {
+			addErr(errs, path, "string does not match format uuid")
+		}
+	case "uri":
+		u, err := url.Parse(value)
+		if err != nil || u.Scheme == "" {
+			addErr(errs, path, "string does not match format uri")
+		}
+	case "ipv4":
+		ip := net.ParseIP(value)
+		if ip == nil || ip.To4() == nil {
+			addErr(errs, path, "string does not match format ipv4")
+		}
+	case "byte":
+		if _, err := base64.StdEncoding.DecodeString(value); err != nil {
+			addErr(errs, path, "string does not match format byte")
+		}
+	}
 }
 
 func validateNumberConstraints(path string, schema map[string]any, data any, errs *[]ValidationError) {
@@ -343,7 +429,7 @@ func validateEnumConst(path string, schema map[string]any, data any, errs *[]Val
 		}
 		return
 	}
-	if enum, ok := schema[EnumKey].([]any); ok {
+	if enum, ok := schemaAnySlice(schema[EnumKey]); ok {
 		for _, e := range enum {
 			if deepEqualJSON(e, data) {
 				return
@@ -575,6 +661,21 @@ func deepEqualJSON(a, b any) bool {
 		return true
 	default:
 		return reflect.DeepEqual(a, b)
+	}
+}
+
+func schemaAnySlice(value any) ([]any, bool) {
+	switch typed := value.(type) {
+	case []any:
+		return typed, true
+	case []string:
+		converted := make([]any, len(typed))
+		for i, item := range typed {
+			converted[i] = item
+		}
+		return converted, true
+	default:
+		return nil, false
 	}
 }
 

@@ -1,0 +1,49 @@
+﻿version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - copyloopvar
+    - embeddedstructfieldcheck
+    - durationcheck
+    - errcheck
+    - errorlint
+    - gocyclo
+
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    gocyclo:
+      min-complexity: 30
+    revive:
+      severity: warning
+      confidence: 0.8
+      rules:
+        - name: blank-imports
+        - name: errorf
+        - name: error-strings
+        - name: exported
+        - name: if-return
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range-val-address
+        - name: unexported-return
+        - name: var-naming
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt

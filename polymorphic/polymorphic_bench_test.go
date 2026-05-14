@@ -117,5 +117,5 @@ func benchmarkToPageN(b *testing.B, n int) {
 	}
 }
 
-func BenchmarkToPage_10(b *testing.B)   { benchmarkToPageN(b, 10) }
+func BenchmarkToPage_10(b *testing.B)  { benchmarkToPageN(b, 10) }
 func BenchmarkToPage_100(b *testing.B) { benchmarkToPageN(b, 100) }

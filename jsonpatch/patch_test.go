@@ -3237,6 +3237,7 @@ func TestShouldPromoteEmbeddedFieldsGivenStructWithAnonymousFieldWhenGeneratingP
 	}
 	type EmbedExtended struct {
 		EmbedBase
+
 		Name string `json:"name"`
 	}
 	t.Run("Embedded_fields_promoted_no_phantom_diff", func(t *testing.T) {

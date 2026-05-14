@@ -35,10 +35,6 @@ func registerWithDiscriminator(discriminator string, factory TypeFactory, isDefa
 	}
 }
 
-func registerDefaultWithDiscriminator(discriminator string, factory TypeFactory) {
-	registerWithDiscriminator(discriminator, factory, true)
-}
-
 // RegisterWithDiscriminator stores a factory function under the given
 // discriminator. The factory should return a pointer to a zero-value
 // instance of the concrete type. It panics if discriminator is empty.

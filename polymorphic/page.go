@@ -4,16 +4,23 @@ func init() {
 	registerDefaultType[PolymorphicPage]()
 }
 
+// PolymorphicPage represents a paginated polymorphic response envelope.
+//
+//revive:disable:exported
 type PolymorphicPage struct {
 	Envelopes []*Envelope `json:"envelopes,omitempty"`
 	Prev      string      `json:"prev,omitempty"`
 	Next      string      `json:"next,omitempty"`
 }
 
+// GetDiscriminator returns the discriminator used to register PolymorphicPage.
 func (obj *PolymorphicPage) GetDiscriminator() string {
 	return "mesh://pages/page"
 }
 
+//revive:enable:exported
+
+// Page represents a typed page of polymorphic models and pagination links.
 type Page[T Polymorphic] struct {
 	Models []T    `json:"models,omitempty"`
 	Prev   string `json:"prev,omitempty"`
