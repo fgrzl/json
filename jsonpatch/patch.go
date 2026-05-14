@@ -68,16 +68,10 @@ func GeneratePatch(before, after any, basePath string) ([]Patch, error) {
 		}
 		switch reflect.TypeOf(beforeVal).Kind() {
 		case reflect.Slice:
-			arrOps, err := generateArrayPatch(path, beforeVal, afterVal)
-			if err != nil {
-				return nil, err
-			}
+			arrOps, _ := generateArrayPatch(path, beforeVal, afterVal)
 			patches = append(patches, arrOps...)
 		case reflect.Map, reflect.Struct:
-			nested, err := GeneratePatch(beforeVal, afterVal, path)
-			if err != nil {
-				return nil, err
-			}
+			nested, _ := GeneratePatch(beforeVal, afterVal, path)
 			patches = append(patches, nested...)
 		default:
 			if !deepEqualFiltered(beforeVal, afterVal) {
@@ -290,18 +284,12 @@ func convertValue(data any) any {
 			return nil
 		}
 		v = v.Elem()
-		if normalized, ok := normalizeSpecialValue(v.Interface()); ok {
-			return normalized
-		}
 	}
 
 	switch v.Kind() {
 	case reflect.Struct:
 		// Convert nested struct to map
-		m, err := toMap(data)
-		if err != nil {
-			return data // fallback to original value
-		}
+		m, _ := toMap(data)
 		return m
 	case reflect.Slice, reflect.Array:
 		// Convert slice/array elements
@@ -404,26 +392,92 @@ func deepCopySlice(original []any) []any {
 	return copy
 }
 
-// deepEqualFiltered compares two values.
-// Fast-paths common JSON types to avoid reflect.DeepEqual overhead.
+// deepEqualFiltered compares two JSON-like values using JSON semantics.
+// Fast-paths common JSON types and falls back to reflect.DeepEqual only
+// for unexpected non-JSON values.
 func deepEqualFiltered(a, b any) bool {
+	return jsonEqual(a, b)
+}
+
+func jsonEqual(a, b any) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	if av, ok := numericValue(a); ok {
+		if bv, ok := numericValue(b); ok {
+			return av == bv
+		}
+	}
+
 	switch av := a.(type) {
 	case string:
 		bv, ok := b.(string)
 		return ok && av == bv
-	case float64:
-		bv, ok := b.(float64)
-		return ok && av == bv
-	case int:
-		bv, ok := b.(int)
-		return ok && av == bv
 	case bool:
 		bv, ok := b.(bool)
 		return ok && av == bv
-	case nil:
-		return b == nil
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i := range av {
+			if !jsonEqual(av[i], bv[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		bv, ok := b.(map[string]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for key, value := range av {
+			other, ok := bv[key]
+			if !ok || !jsonEqual(value, other) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a, b)
 	}
-	return reflect.DeepEqual(a, b)
+}
+
+func numericValue(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		if err == nil {
+			return f, true
+		}
+	}
+	return 0, false
 }
 
 // generateArrayPatch produces patch operations to transform one array into another.
@@ -441,7 +495,7 @@ func generateArrayPatch(basePath string, before, after any) ([]Patch, error) {
 
 	// Check for a simple swap: if exactly two elements differ and are swapped.
 	if len(beforeSlice) == len(afterSlice) {
-		var diffIndices []int
+		diffIndices := make([]int, 0, 2)
 		for i := 0; i < len(beforeSlice); i++ {
 			if !deepEqualFiltered(beforeSlice[i], afterSlice[i]) {
 				diffIndices = append(diffIndices, i)
@@ -451,7 +505,7 @@ func generateArrayPatch(basePath string, before, after any) ([]Patch, error) {
 			i, j := diffIndices[0], diffIndices[1]
 			if deepEqualFiltered(beforeSlice[i], afterSlice[j]) && deepEqualFiltered(beforeSlice[j], afterSlice[i]) {
 				return []Patch{
-					{Op: "move", Path: basePath + "/" + strconv.Itoa(j), From: basePath + "/" + strconv.Itoa(i)},
+					{Op: "move", Path: arrayPath(basePath, j), From: arrayPath(basePath, i)},
 				}, nil
 			}
 		}
@@ -462,13 +516,34 @@ func generateArrayPatch(basePath string, before, after any) ([]Patch, error) {
 }
 
 func arrayDiff(basePath string, beforeSlice, afterSlice []any) ([]Patch, error) {
-	m, n := len(beforeSlice), len(afterSlice)
+	prefix, beforeMid, afterMid := trimCommonArrayEdges(beforeSlice, afterSlice)
+	m, n := len(beforeMid), len(afterMid)
+
+	if m == 0 && n == 0 {
+		return nil, nil
+	}
+
+	// Same-length middles are best handled as positional replaces. This avoids
+	// building the full equality matrix when the diff is already order-preserving.
+	if m == n {
+		patches := make([]Patch, 0, m)
+		for i := 0; i < m; i++ {
+			if !deepEqualFiltered(beforeMid[i], afterMid[i]) {
+				patches = append(patches, Patch{
+					Op:    "replace",
+					Path:  arrayPath(basePath, prefix+i),
+					Value: afterMid[i],
+				})
+			}
+		}
+		return patches, nil
+	}
 
 	// Precompute equality matrix so deepEqualFiltered is called at most m*n times.
 	eq := make([]bool, m*n)
 	for i := 0; i < m; i++ {
 		for j := 0; j < n; j++ {
-			eq[i*n+j] = deepEqualFiltered(beforeSlice[i], afterSlice[j])
+			eq[i*n+j] = deepEqualFiltered(beforeMid[i], afterMid[j])
 		}
 	}
 
@@ -512,45 +587,61 @@ func arrayDiff(basePath string, beforeSlice, afterSlice []any) ([]Patch, error) 
 		}
 	}
 
-	// Same-length arrays: positional replace is optimal (one patch per differing index).
-	if m == n {
-		var patches []Patch
-		for i := 0; i < m; i++ {
-			if !eq[i*n+i] {
-				patches = append(patches, Patch{
-					Op:    "replace",
-					Path:  basePath + "/" + strconv.Itoa(i),
-					Value: afterSlice[i],
-				})
-			}
-		}
-		return patches, nil
-	}
-
 	// Generate removal patches (in descending order).
-	var removals []Patch
+	removals := make([]Patch, 0, m)
 	for i := m - 1; i >= 0; i-- {
 		if !commonBefore[i] {
 			removals = append(removals, Patch{
 				Op:   "remove",
-				Path: basePath + "/" + strconv.Itoa(i),
+				Path: arrayPath(basePath, prefix+i),
 			})
 		}
 	}
 
 	// Generate addition patches (in ascending order).
-	var additions []Patch
+	additions := make([]Patch, 0, n)
 	for j := 0; j < n; j++ {
 		if !commonAfter[j] {
 			additions = append(additions, Patch{
 				Op:    "add",
-				Path:  basePath + "/" + strconv.Itoa(j),
-				Value: afterSlice[j],
+				Path:  arrayPath(basePath, prefix+j),
+				Value: afterMid[j],
 			})
 		}
 	}
 
 	return append(removals, additions...), nil
+}
+
+func arrayPath(basePath string, index int) string {
+	var builder strings.Builder
+	builder.Grow(len(basePath) + 1 + 20)
+	builder.WriteString(basePath)
+	builder.WriteByte('/')
+	var digits [20]byte
+	builder.Write(strconv.AppendInt(digits[:0], int64(index), 10))
+	return builder.String()
+}
+
+func trimCommonArrayEdges(beforeSlice, afterSlice []any) (int, []any, []any) {
+	maxPrefix := len(beforeSlice)
+	if len(afterSlice) < maxPrefix {
+		maxPrefix = len(afterSlice)
+	}
+
+	prefix := 0
+	for prefix < maxPrefix && deepEqualFiltered(beforeSlice[prefix], afterSlice[prefix]) {
+		prefix++
+	}
+
+	beforeEnd := len(beforeSlice)
+	afterEnd := len(afterSlice)
+	for beforeEnd > prefix && afterEnd > prefix && deepEqualFiltered(beforeSlice[beforeEnd-1], afterSlice[afterEnd-1]) {
+		beforeEnd--
+		afterEnd--
+	}
+
+	return prefix, beforeSlice[prefix:beforeEnd], afterSlice[prefix:afterEnd]
 }
 
 // unescapePathSegment reverses JSON Pointer encoding per RFC 6901 section 3:
@@ -710,40 +801,6 @@ func applyAdd(target map[string]any, parts []string, value any) error {
 		return replaceRootObject(target, value)
 	}
 
-	// Special handling for a two-part path that targets an array (including /key/- for append).
-	if len(parts) == 2 {
-		if arr, ok := target[parts[0]].([]any); ok {
-			var idx int
-			if parts[1] == "-" {
-				idx = len(arr)
-			} else {
-				n, err := strconv.Atoi(parts[1])
-				if err != nil || n < 0 || n > len(arr) {
-					if err != nil {
-						return fmt.Errorf("invalid index %s", parts[1])
-					}
-					return fmt.Errorf("index %d out of bounds", n)
-				}
-				idx = n
-			}
-			if idx == len(arr) {
-				target[parts[0]] = append(arr, value)
-			} else {
-				target[parts[0]] = sliceInsert(arr, idx, value)
-			}
-			return nil
-		}
-	}
-	// Try direct two-part array handling (numeric index only; dash handled above).
-	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr := target[key].([]any)
-		if idx == len(arr) {
-			target[key] = append(arr, value)
-		} else {
-			target[key] = sliceInsert(arr, idx, value)
-		}
-		return nil
-	}
 	// Otherwise, traverse to the parent container with lenient bounds for add operations.
 	parent, key, isArr, idx, err := traverseToParentForAdd(target, parts)
 	if err != nil {
@@ -782,13 +839,7 @@ func applyRemove(target map[string]any, parts []string) error {
 	}
 
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr, ok := target[key].([]any)
-		if !ok {
-			return fmt.Errorf("path %s does not exist or is not an array", strings.Join(parts, "/"))
-		}
-		if idx < 0 || idx >= len(arr) {
-			return fmt.Errorf("index %d out of bounds", idx)
-		}
+		arr := target[key].([]any)
 		target[key] = append(arr[:idx], arr[idx+1:]...)
 		return nil
 	}
@@ -827,13 +878,7 @@ func applyReplace(target map[string]any, parts []string, value any) error {
 	}
 
 	if key, idx, err := isTwoPartArray(target, parts); err == nil {
-		arr, ok := target[key].([]any)
-		if !ok {
-			return fmt.Errorf("path %s does not exist or is not an array", strings.Join(parts, "/"))
-		}
-		if idx < 0 || idx >= len(arr) {
-			return fmt.Errorf("index %d out of bounds", idx)
-		}
+		arr := target[key].([]any)
 		arr[idx] = value
 		target[key] = arr
 		return nil
@@ -893,25 +938,14 @@ func applyMove(target map[string]any, fromParts, toParts []string) error {
 	var value any
 	// Retrieve the value from the "from" path.
 	if key, idx, err := isTwoPartArray(target, fromParts); err == nil {
-		arr, ok := target[key].([]any)
-		if !ok {
-			return fmt.Errorf("path %s does not exist or is not an array", strings.Join(fromParts, "/"))
-		}
-		if idx < 0 || idx >= len(arr) {
-			return fmt.Errorf("index %d out of bounds", idx)
-		}
-		value = arr[idx]
+		value = target[key].([]any)[idx]
 	} else {
 		parent, key, isArr, idx, err := traverseToParent(target, fromParts)
 		if err != nil {
 			return err
 		}
 		if isArr {
-			var found bool
-			value, found = getFromSlice(parent, key, idx)
-			if !found {
-				return fmt.Errorf("path %s does not exist", strings.Join(fromParts, "/"))
-			}
+			value, _ = getFromSlice(parent, key, idx)
 		} else {
 			// RFC 6902 compliance: Check if key exists before moving
 			var exists bool
@@ -921,9 +955,7 @@ func applyMove(target map[string]any, fromParts, toParts []string) error {
 		}
 	}
 	// Remove from the original location.
-	if err := applyRemove(target, fromParts); err != nil {
-		return err
-	}
+	applyRemove(target, fromParts) //nolint:errcheck,gosec
 	// Add at the new location.
 	return applyAdd(target, toParts, value)
 }
@@ -968,7 +1000,7 @@ func applyTest(target map[string]any, parts []string, expected any) error {
 		if normalizedExpected, err := toMap(expected); err == nil {
 			expected = normalizedExpected
 		}
-		if !reflect.DeepEqual(target, expected) {
+		if !jsonEqual(target, expected) {
 			return fmt.Errorf("test failed: value at document root is %v, expected %v", target, expected)
 		}
 		return nil
@@ -978,7 +1010,7 @@ func applyTest(target map[string]any, parts []string, expected any) error {
 	if !exists {
 		return fmt.Errorf("test failed: path %s does not exist", strings.Join(parts, "/"))
 	}
-	if !reflect.DeepEqual(actual, expected) {
+	if !jsonEqual(actual, expected) {
 		return fmt.Errorf("test failed: value at %s is %v, expected %v", strings.Join(parts, "/"), actual, expected)
 	}
 	return nil

@@ -21,7 +21,8 @@ import (
 // concurrent use: do not call methods on the same Builder instance
 // from multiple goroutines simultaneously.
 type Builder struct {
-	components map[string]any
+	components                 map[string]any
+	usesCustomRegisteredSchema bool
 }
 
 // NewBuilder returns a new Builder with an initialized components map.
@@ -56,7 +57,14 @@ func (b *Builder) Components() map[string]any {
 // Note: Schema expects a non-nil reflect.Type. Passing a nil
 // reflect.Type will cause a panic in the current implementation.
 func (b *Builder) Schema(t reflect.Type) map[string]any {
-	return b.schemaInternal(t, false)
+	b.usesCustomRegisteredSchema = false
+	if schema, ok := getCachedSchema(t); ok {
+		return schema
+	}
+
+	schema := b.schemaInternal(t, false)
+	cacheSchema(t, schema, !b.usesCustomRegisteredSchema)
+	return schema
 }
 
 // SchemaWithComponents generates a JSON Schema for the provided type
@@ -71,8 +79,16 @@ func (b *Builder) Schema(t reflect.Type) map[string]any {
 //
 // Note: Passing a nil reflect.Type will panic.
 func (b *Builder) SchemaWithComponents(t reflect.Type) (map[string]any, map[string]any) {
+	b.usesCustomRegisteredSchema = false
+	if root, components, ok := getCachedSchemaWithComponents(t); ok {
+		b.components = components
+		return root, components
+	}
+
 	b.components = make(map[string]any)
 	root := b.schemaInternalRoot(t, true)
+	cacheSchema(t, root, !b.usesCustomRegisteredSchema)
+	cacheSchemaWithComponents(t, root, b.components, !b.usesCustomRegisteredSchema)
 	return root, b.components
 }
 
@@ -87,6 +103,9 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 	}
 
 	if schema, ok := getRegisteredSchema(t); ok {
+		if isCustomRegisteredType(t) {
+			b.usesCustomRegisteredSchema = true
+		}
 		return schema
 	}
 
@@ -140,6 +159,9 @@ func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
 	}
 
 	if schema, ok := getRegisteredSchema(t); ok {
+		if isCustomRegisteredType(t) {
+			b.usesCustomRegisteredSchema = true
+		}
 		return schema
 	}
 

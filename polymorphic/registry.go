@@ -3,6 +3,7 @@ package polymorphic
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // Polymorphic is implemented by types that expose a discriminator string
@@ -16,10 +17,15 @@ type Polymorphic interface {
 type TypeFactory = func() any
 
 var (
-	registryMu   sync.RWMutex
+	registryMu   sync.Mutex
 	types        = make(map[string]TypeFactory)
 	defaultTypes = make(map[string]TypeFactory)
+	registryView atomic.Value // stores map[string]TypeFactory
 )
+
+func init() {
+	registryView.Store(cloneFactories(types))
+}
 
 func registerWithDiscriminator(discriminator string, factory TypeFactory, isDefault bool) {
 	if discriminator == "" {
@@ -33,6 +39,7 @@ func registerWithDiscriminator(discriminator string, factory TypeFactory, isDefa
 	if isDefault {
 		defaultTypes[discriminator] = factory
 	}
+	registryView.Store(cloneFactories(types))
 }
 
 // RegisterWithDiscriminator stores a factory function under the given
@@ -111,10 +118,8 @@ func CreateInstance(discriminator string) (Polymorphic, error) {
 // LoadFactory returns the factory function registered for the
 // discriminator, or an error if there is none.
 func LoadFactory(discriminator string) (TypeFactory, error) {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-
-	if factory, ok := types[discriminator]; ok {
+	current := registryView.Load().(map[string]TypeFactory)
+	if factory, ok := current[discriminator]; ok {
 		return factory, nil
 	}
 	return nil, fmt.Errorf("type %q is not registered", discriminator)
@@ -136,4 +141,5 @@ func ClearRegistry() {
 	defer registryMu.Unlock()
 
 	types = cloneFactories(defaultTypes)
+	registryView.Store(cloneFactories(types))
 }

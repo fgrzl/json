@@ -1,14 +1,19 @@
 package jsonschema
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net"
 	"net/url"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,19 +45,48 @@ func (e *ErrValidation) Errors() []ValidationError {
 	return e.Errs
 }
 
+type validationPath struct {
+	parts []string
+}
+
+func (p *validationPath) push(segment string) {
+	p.parts = append(p.parts, segment)
+}
+
+func (p *validationPath) pop() {
+	if len(p.parts) == 0 {
+		return
+	}
+	p.parts = p.parts[:len(p.parts)-1]
+}
+
+func (p *validationPath) String() string {
+	if p == nil || len(p.parts) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	for _, part := range p.parts {
+		builder.WriteByte('/')
+		builder.WriteString(part)
+	}
+	return builder.String()
+}
+
 // Validate validates data against the schema. Data should be the decoded JSON
 // shape: map[string]any, []any, float64, string, bool, or nil. Returns nil if
 // valid; otherwise *ErrValidation with one or more path/message pairs.
 func Validate(schema map[string]any, data any) error {
 	var errs []ValidationError
-	validateAt(schema, "", schema, data, &errs)
+	var path validationPath
+	validateAt(schema, &path, schema, data, &errs)
 	if len(errs) == 0 {
 		return nil
 	}
 	return &ErrValidation{Errs: errs}
 }
 
-func validateAt(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateAt(root map[string]any, path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	if schema == nil {
 		return
 	}
@@ -144,7 +178,7 @@ func validateAt(root map[string]any, path string, schema map[string]any, data an
 	validateEnumConst(path, schema, data, errs)
 }
 
-func validateExplicitType(root map[string]any, path string, schema map[string]any, typeVal any, data any, errs *[]ValidationError) bool {
+func validateExplicitType(root map[string]any, path *validationPath, schema map[string]any, typeVal any, data any, errs *[]ValidationError) bool {
 	switch typed := typeVal.(type) {
 	case string:
 		if !typeMatches(typed, data) {
@@ -193,7 +227,7 @@ func validateExplicitType(root map[string]any, path string, schema map[string]an
 	return true
 }
 
-func validateInstanceConstraints(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateInstanceConstraints(root map[string]any, path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	switch value := data.(type) {
 	case map[string]any:
 		validateObject(root, path, schema, value, errs)
@@ -208,7 +242,7 @@ func validateInstanceConstraints(root map[string]any, path string, schema map[st
 	}
 }
 
-func validateIfThenElse(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateIfThenElse(root map[string]any, path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	ifSchema, ok := schema[IfKey].(map[string]any)
 	if !ok {
 		return
@@ -228,7 +262,7 @@ func validateIfThenElse(root map[string]any, path string, schema map[string]any,
 	}
 }
 
-func validateTypeConstraints(root map[string]any, path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateTypeConstraints(root map[string]any, path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	matchedType, ok := matchingSchemaType(schema[TypeKey], data)
 	if !ok {
 		return
@@ -267,7 +301,7 @@ func matchingSchemaType(typeSpec any, data any) (string, bool) {
 	return "", false
 }
 
-func validateTypeSpecificConstraints(root map[string]any, path string, schema map[string]any, typeVal string, data any, errs *[]ValidationError) {
+func validateTypeSpecificConstraints(root map[string]any, path *validationPath, schema map[string]any, typeVal string, data any, errs *[]ValidationError) {
 	switch typeVal {
 	case TypeObject:
 		if obj, ok := data.(map[string]any); ok {
@@ -289,10 +323,23 @@ type patternProperty struct {
 	schema map[string]any
 }
 
-func validateObject(root map[string]any, path string, schema map[string]any, obj map[string]any, errs *[]ValidationError) {
+type cachedPatternProperties struct {
+	compiled []patternProperty
+	invalid  []string
+}
+
+var (
+	patternPropertiesCache   = make(map[string]cachedPatternProperties)
+	patternPropertiesCacheMu sync.RWMutex
+)
+
+func validateObject(root map[string]any, path *validationPath, schema map[string]any, obj map[string]any, errs *[]ValidationError) {
 	validateObjectPropertyCounts(path, schema, len(obj), errs)
 	patternProps := compilePatternProperties(path, schema, errs)
-	matchedByPattern := make(map[string]bool)
+	var matchedByPattern map[string]bool
+	if len(patternProps) > 0 {
+		matchedByPattern = make(map[string]bool)
+	}
 
 	if req, ok := schemaAnySlice(schema[RequiredKey]); ok {
 		for _, r := range req {
@@ -307,27 +354,32 @@ func validateObject(root map[string]any, path string, schema map[string]any, obj
 	}
 	props, _ := schema[PropertiesKey].(map[string]any)
 	for key, val := range obj {
-		subPath := path + "/" + escapeJSONPointer(key)
 		if props != nil {
 			if subSchema, ok := props[key].(map[string]any); ok {
-				validateAt(root, subPath, subSchema, val, errs)
+				path.push(escapeJSONPointer(key))
+				validateAt(root, path, subSchema, val, errs)
+				path.pop()
 			}
 		}
 		for _, patternProp := range patternProps {
 			if patternProp.re.MatchString(key) {
 				matchedByPattern[key] = true
-				validateAt(root, subPath, patternProp.schema, val, errs)
+				path.push(escapeJSONPointer(key))
+				validateAt(root, path, patternProp.schema, val, errs)
+				path.pop()
 			}
 		}
 	}
 	validateAdditionalProperties(root, path, schema, obj, matchedByPattern, errs)
 }
 
-func validateArray(root map[string]any, path string, schema map[string]any, arr []any, errs *[]ValidationError) {
+func validateArray(root map[string]any, path *validationPath, schema map[string]any, arr []any, errs *[]ValidationError) {
 	itemsSchema, hasItems := schema[ItemsKey].(map[string]any)
 	if hasItems {
 		for i, item := range arr {
-			validateAt(root, fmt.Sprintf("%s/%d", path, i), itemsSchema, item, errs)
+			path.push(strconv.Itoa(i))
+			validateAt(root, path, itemsSchema, item, errs)
+			path.pop()
 		}
 	}
 	validateArrayLength(path, schema, len(arr), errs)
@@ -335,7 +387,7 @@ func validateArray(root map[string]any, path string, schema map[string]any, arr 
 	validateContains(root, path, schema, arr, errs)
 }
 
-func validateStringConstraints(path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateStringConstraints(path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	s, ok := data.(string)
 	if !ok {
 		return
@@ -361,7 +413,7 @@ func validateStringConstraints(path string, schema map[string]any, data any, err
 	}
 }
 
-func validateFormatConstraint(path, format, value string, errs *[]ValidationError) {
+func validateFormatConstraint(path *validationPath, format, value string, errs *[]ValidationError) {
 	switch format {
 	case "date-time":
 		if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
@@ -388,7 +440,7 @@ func validateFormatConstraint(path, format, value string, errs *[]ValidationErro
 	}
 }
 
-func validateNumberConstraints(path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateNumberConstraints(path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	n, ok := toFloat(data)
 	if !ok {
 		return
@@ -422,7 +474,7 @@ func validateNumberConstraints(path string, schema map[string]any, data any, err
 	}
 }
 
-func validateEnumConst(path string, schema map[string]any, data any, errs *[]ValidationError) {
+func validateEnumConst(path *validationPath, schema map[string]any, data any, errs *[]ValidationError) {
 	if c, has := schema[ConstKey]; has {
 		if !deepEqualJSON(c, data) {
 			addErr(errs, path, fmt.Sprintf("value must be const %v", c))
@@ -439,7 +491,7 @@ func validateEnumConst(path string, schema map[string]any, data any, errs *[]Val
 	}
 }
 
-func validateObjectPropertyCounts(path string, schema map[string]any, length int, errs *[]ValidationError) {
+func validateObjectPropertyCounts(path *validationPath, schema map[string]any, length int, errs *[]ValidationError) {
 	if min, ok := toFloat(schema[MinPropertiesKey]); ok {
 		if float64(length) < min {
 			addErr(errs, path, fmt.Sprintf("object property count %d less than minProperties %d", length, int(min)))
@@ -452,30 +504,75 @@ func validateObjectPropertyCounts(path string, schema map[string]any, length int
 	}
 }
 
-func compilePatternProperties(path string, schema map[string]any, errs *[]ValidationError) []patternProperty {
+func compilePatternProperties(path *validationPath, schema map[string]any, errs *[]ValidationError) []patternProperty {
 	rawPatternProps, _ := schema[PatternPropertiesKey].(map[string]any)
 	if rawPatternProps == nil {
 		return nil
 	}
 
-	compiled := make([]patternProperty, 0, len(rawPatternProps))
-	for pattern, value := range rawPatternProps {
-		subSchema, ok := value.(map[string]any)
-		if !ok {
-			continue
+	key, ok := patternPropertiesCacheKey(rawPatternProps)
+	if !ok {
+		compiled := make([]patternProperty, 0, len(rawPatternProps))
+		invalid := make([]string, 0)
+		for pattern, value := range rawPatternProps {
+			subSchema, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				invalid = append(invalid, pattern)
+				continue
+			}
+			compiled = append(compiled, patternProperty{re: re, schema: subSchema})
 		}
-		re, err := regexp.Compile(pattern)
-		if err != nil {
+		for _, pattern := range invalid {
 			addErr(errs, path, fmt.Sprintf("invalid patternProperties regex %s", pattern))
-			continue
 		}
-		compiled = append(compiled, patternProperty{re: re, schema: subSchema})
+		return compiled
 	}
 
-	return compiled
+	patternPropertiesCacheMu.RLock()
+	cached, ok := patternPropertiesCache[key]
+	patternPropertiesCacheMu.RUnlock()
+	if !ok {
+		compiled := make([]patternProperty, 0, len(rawPatternProps))
+		invalid := make([]string, 0)
+		for pattern, value := range rawPatternProps {
+			subSchema, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				invalid = append(invalid, pattern)
+				continue
+			}
+			compiled = append(compiled, patternProperty{re: re, schema: subSchema})
+		}
+		cached = cachedPatternProperties{compiled: compiled, invalid: invalid}
+		patternPropertiesCacheMu.Lock()
+		patternPropertiesCache[key] = cached
+		patternPropertiesCacheMu.Unlock()
+	}
+
+	for _, pattern := range cached.invalid {
+		addErr(errs, path, fmt.Sprintf("invalid patternProperties regex %s", pattern))
+	}
+
+	return cached.compiled
 }
 
-func validateAdditionalProperties(root map[string]any, path string, schema map[string]any, obj map[string]any, matchedByPattern map[string]bool, errs *[]ValidationError) {
+func patternPropertiesCacheKey(rawPatternProps map[string]any) (string, bool) {
+	encoded, err := json.Marshal(rawPatternProps)
+	if err != nil {
+		return "", false
+	}
+	checksum := sha256.Sum256(encoded)
+	return hex.EncodeToString(checksum[:]), true
+}
+
+func validateAdditionalProperties(root map[string]any, path *validationPath, schema map[string]any, obj map[string]any, matchedByPattern map[string]bool, errs *[]ValidationError) {
 	props, _ := schema[PropertiesKey].(map[string]any)
 	allowed := map[string]bool{}
 	for k := range props {
@@ -485,7 +582,9 @@ func validateAdditionalProperties(root map[string]any, path string, schema map[s
 	if additionalVal == false {
 		for k := range obj {
 			if !allowed[k] && !matchedByPattern[k] {
-				addErr(errs, path+"/"+escapeJSONPointer(k), "additional property not allowed")
+				path.push(escapeJSONPointer(k))
+				addErr(errs, path, "additional property not allowed")
+				path.pop()
 			}
 		}
 		return
@@ -495,12 +594,14 @@ func validateAdditionalProperties(root map[string]any, path string, schema map[s
 			if allowed[k] || matchedByPattern[k] {
 				continue
 			}
-			validateAt(root, path+"/"+escapeJSONPointer(k), subSchema, v, errs)
+			path.push(escapeJSONPointer(k))
+			validateAt(root, path, subSchema, v, errs)
+			path.pop()
 		}
 	}
 }
 
-func validateContains(root map[string]any, path string, schema map[string]any, arr []any, errs *[]ValidationError) {
+func validateContains(root map[string]any, path *validationPath, schema map[string]any, arr []any, errs *[]ValidationError) {
 	containsSchema, ok := schema[ContainsKey].(map[string]any)
 	if !ok {
 		return
@@ -508,7 +609,9 @@ func validateContains(root map[string]any, path string, schema map[string]any, a
 
 	for i, item := range arr {
 		var itemErrs []ValidationError
-		validateAt(root, fmt.Sprintf("%s/%d", path, i), containsSchema, item, &itemErrs)
+		path.push(strconv.Itoa(i))
+		validateAt(root, path, containsSchema, item, &itemErrs)
+		path.pop()
 		if len(itemErrs) == 0 {
 			return
 		}
@@ -517,7 +620,7 @@ func validateContains(root map[string]any, path string, schema map[string]any, a
 	addErr(errs, path, "array must contain at least one item matching contains")
 }
 
-func validateArrayLength(path string, schema map[string]any, length int, errs *[]ValidationError) {
+func validateArrayLength(path *validationPath, schema map[string]any, length int, errs *[]ValidationError) {
 	if min, ok := toFloat(schema[MinItemsKey]); ok {
 		if float64(length) < min {
 			addErr(errs, path, fmt.Sprintf("array length %d less than minItems %d", length, int(min)))
@@ -530,14 +633,16 @@ func validateArrayLength(path string, schema map[string]any, length int, errs *[
 	}
 }
 
-func validateUniqueItems(path string, schema map[string]any, arr []any, errs *[]ValidationError) {
+func validateUniqueItems(path *validationPath, schema map[string]any, arr []any, errs *[]ValidationError) {
 	if schema[UniqueItemsKey] != true {
 		return
 	}
 	for i := 1; i < len(arr); i++ {
 		for j := 0; j < i; j++ {
 			if deepEqualJSON(arr[i], arr[j]) {
-				addErr(errs, fmt.Sprintf("%s/%d", path, i), "duplicate array items (uniqueItems)")
+				path.push(strconv.Itoa(i))
+				addErr(errs, path, "duplicate array items (uniqueItems)")
+				path.pop()
 				return
 			}
 		}
@@ -611,8 +716,8 @@ func isMultipleOf(value, multiple float64) bool {
 	return math.Abs(quotient-math.Round(quotient)) <= 1e-9
 }
 
-func addErr(errs *[]ValidationError, path, msg string) {
-	*errs = append(*errs, ValidationError{Path: path, Message: msg})
+func addErr(errs *[]ValidationError, path *validationPath, msg string) {
+	*errs = append(*errs, ValidationError{Path: path.String(), Message: msg})
 }
 
 // escapeJSONPointer escapes a key for use in a JSON Pointer (RFC 6901).

@@ -50,7 +50,8 @@ Notes
 
 - Supported operations: add, remove, replace, move, copy, test. Paths use JSON Pointer (RFC 6901).
 - The empty path `""` targets the document root. Root add/replace require an object value, root test compares the full document, and root remove/move are rejected because `ApplyPatch` returns `map[string]any`.
-- Array diffs use an LCS-based heuristic; element identity is by deep equality.
+- Array diffs use an LCS-based heuristic; common prefixes and suffixes are trimmed first, and same-length trimmed middles are handled as positional replaces when that is sufficient.
+- Element identity is by JSON semantics, so numeric values compare equal across JSON-friendly numeric types.
 - Types implementing `json.Marshaler` or `encoding.TextMarshaler` are diffed by their marshaled form.
 - See the package tests for edge cases and ambiguous array identity.
 
@@ -130,6 +131,8 @@ func main() {
     approaches around the diff generation.
 - Avoid generating patches for frequently-changing large arrays; consider
     replacing entire arrays with a single `replace` op when that is cheaper.
+- When array edits are localized, the prefix/suffix trimming path reduces the
+    work the generator needs to do before it falls back to a deeper comparison.
 
 4) Error handling
 

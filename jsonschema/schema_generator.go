@@ -94,6 +94,33 @@ var registeredSchemas = builtinSchemas()
 
 var registeredSchemasMu sync.RWMutex
 
+var (
+	customRegisteredTypes   = make(map[reflect.Type]struct{})
+	customRegisteredTypesMu sync.RWMutex
+)
+
+var (
+	schemaCache   = make(map[reflect.Type]schemaCacheEntry)
+	schemaCacheMu sync.RWMutex
+
+	schemaWithComponentsCache   = make(map[reflect.Type]schemaWithComponentsCacheEntry)
+	schemaWithComponentsCacheMu sync.RWMutex
+
+	schemaRawCache   = make(map[reflect.Type]json.RawMessage)
+	schemaRawCacheMu sync.RWMutex
+)
+
+type schemaWithComponentsCacheEntry struct {
+	root       map[string]any
+	components map[string]any
+	safe       bool
+}
+
+type schemaCacheEntry struct {
+	schema map[string]any
+	safe   bool
+}
+
 // rawMessageType is the reflect.Type for json.RawMessage and is used to
 // ensure RawMessage is treated as raw JSON (empty schema) rather than a
 // byte slice.
@@ -102,6 +129,39 @@ var rawMessageType = reflect.TypeOf(json.RawMessage{})
 type schemaCloneState struct {
 	maps   map[uintptr]map[string]any
 	slices map[uintptr][]any
+}
+
+func markCustomRegisteredType(t reflect.Type) {
+	if t == nil {
+		return
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	customRegisteredTypesMu.Lock()
+	customRegisteredTypes[t] = struct{}{}
+	customRegisteredTypesMu.Unlock()
+}
+
+func isCustomRegisteredType(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	customRegisteredTypesMu.RLock()
+	_, ok := customRegisteredTypes[t]
+	customRegisteredTypesMu.RUnlock()
+	return ok
+}
+
+func clearCustomRegisteredTypes() {
+	customRegisteredTypesMu.Lock()
+	customRegisteredTypes = make(map[reflect.Type]struct{})
+	customRegisteredTypesMu.Unlock()
 }
 
 // getRegisteredSchema attempts to find a registered schema for the
@@ -143,6 +203,47 @@ func getRegisteredSchema(t reflect.Type) (map[string]any, bool) {
 	}
 
 	return nil, false
+}
+
+func cloneSchemaMapFast(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+
+	cloned := make(map[string]any, len(schema))
+	for key, value := range schema {
+		cloned[key] = cloneSchemaValueFast(value)
+	}
+
+	return cloned
+}
+
+func cloneSchemaValueFast(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchemaMapFast(typed)
+	case []any:
+		return cloneSchemaSliceFast(typed)
+	case []string:
+		cloned := make([]string, len(typed))
+		copy(cloned, typed)
+		return cloned
+	default:
+		return value
+	}
+}
+
+func cloneSchemaSliceFast(items []any) []any {
+	if items == nil {
+		return nil
+	}
+
+	cloned := make([]any, len(items))
+	for i, item := range items {
+		cloned[i] = cloneSchemaValueFast(item)
+	}
+
+	return cloned
 }
 
 func cloneSchemaMap(schema map[string]any) map[string]any {
@@ -218,6 +319,130 @@ func GenerateSchema(t reflect.Type) map[string]any {
 func GenerateSchemaWithComponents(t reflect.Type) (map[string]any, map[string]any) {
 	builder := NewBuilder()
 	return builder.SchemaWithComponents(t)
+}
+
+func normalizeCacheType(t reflect.Type) reflect.Type {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+func getCachedSchema(t reflect.Type) (map[string]any, bool) {
+	t = normalizeCacheType(t)
+	if t == nil {
+		return nil, false
+	}
+
+	schemaCacheMu.RLock()
+	entry, ok := schemaCache[t]
+	schemaCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	if entry.safe {
+		return cloneSchemaMapFast(entry.schema), true
+	}
+	return cloneSchemaMap(entry.schema), true
+}
+
+func getCachedSchemaWithComponents(t reflect.Type) (map[string]any, map[string]any, bool) {
+	t = normalizeCacheType(t)
+	if t == nil {
+		return nil, nil, false
+	}
+
+	schemaWithComponentsCacheMu.RLock()
+	entry, ok := schemaWithComponentsCache[t]
+	schemaWithComponentsCacheMu.RUnlock()
+	if !ok {
+		return nil, nil, false
+	}
+
+	if entry.safe {
+		return cloneSchemaMapFast(entry.root), cloneSchemaMapFast(entry.components), true
+	}
+	return cloneSchemaMap(entry.root), cloneSchemaMap(entry.components), true
+}
+
+func cacheSchema(t reflect.Type, schema map[string]any, safe bool) {
+	t = normalizeCacheType(t)
+	if t == nil || schema == nil {
+		return
+	}
+
+	schemaCacheMu.Lock()
+	if safe {
+		schemaCache[t] = schemaCacheEntry{schema: cloneSchemaMapFast(schema), safe: true}
+	} else {
+		schemaCache[t] = schemaCacheEntry{schema: cloneSchemaMap(schema), safe: false}
+	}
+	schemaCacheMu.Unlock()
+}
+
+func getCachedSchemaRawMessage(t reflect.Type) (json.RawMessage, bool) {
+	t = normalizeCacheType(t)
+	if t == nil {
+		return nil, false
+	}
+
+	schemaRawCacheMu.RLock()
+	raw, ok := schemaRawCache[t]
+	schemaRawCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	return append(json.RawMessage(nil), raw...), true
+}
+
+func cacheSchemaRawMessage(t reflect.Type, raw json.RawMessage) {
+	t = normalizeCacheType(t)
+	if t == nil || raw == nil {
+		return
+	}
+
+	schemaRawCacheMu.Lock()
+	schemaRawCache[t] = append(json.RawMessage(nil), raw...)
+	schemaRawCacheMu.Unlock()
+}
+
+func cacheSchemaWithComponents(t reflect.Type, root, components map[string]any, safe bool) {
+	t = normalizeCacheType(t)
+	if t == nil || root == nil {
+		return
+	}
+
+	schemaWithComponentsCacheMu.Lock()
+	if safe {
+		schemaWithComponentsCache[t] = schemaWithComponentsCacheEntry{
+			root:       cloneSchemaMapFast(root),
+			components: cloneSchemaMapFast(components),
+			safe:       true,
+		}
+	} else {
+		schemaWithComponentsCache[t] = schemaWithComponentsCacheEntry{
+			root:       cloneSchemaMap(root),
+			components: cloneSchemaMap(components),
+			safe:       false,
+		}
+	}
+	schemaWithComponentsCacheMu.Unlock()
+}
+
+func clearSchemaCache() {
+	schemaCacheMu.Lock()
+	schemaCache = make(map[reflect.Type]schemaCacheEntry)
+	schemaCacheMu.Unlock()
+
+	schemaWithComponentsCacheMu.Lock()
+	schemaWithComponentsCache = make(map[reflect.Type]schemaWithComponentsCacheEntry)
+	schemaWithComponentsCacheMu.Unlock()
+
+	schemaRawCacheMu.Lock()
+	schemaRawCache = make(map[reflect.Type]json.RawMessage)
+	schemaRawCacheMu.Unlock()
 }
 
 // applyFieldTags applies struct tags to a field's JSON Schema.
@@ -581,6 +806,8 @@ func RegisterSchema(t reflect.Type, schema map[string]any) {
 		registeredSchemasMu.Lock()
 		registeredSchemas[t] = cloneSchemaMap(schema)
 		registeredSchemasMu.Unlock()
+		markCustomRegisteredType(t)
+		clearSchemaCache()
 	}
 }
 
@@ -591,21 +818,27 @@ func ClearRegistry() {
 	registeredSchemasMu.Lock()
 	registeredSchemas = builtinSchemas()
 	registeredSchemasMu.Unlock()
+	clearCustomRegisteredTypes()
+	clearSchemaCache()
 }
 
 // GenerateSchemaRawMessage returns a JSON Schema as a raw JSON message.
 // It returns nil if the schema cannot be marshaled.
 func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
+	if raw, ok := getCachedSchemaRawMessage(t); ok {
+		return raw
+	}
+
 	schema := GenerateSchema(t)
 	raw, err := json.Marshal(schema)
 	if err != nil {
 		return nil
 	}
+	cacheSchemaRawMessage(t, raw)
 	return raw
 }
 
 // SchemaFrom generates a JSON Schema for a generic type T.
 func SchemaFrom[T any]() json.RawMessage {
-	var zero T
-	return GenerateSchemaRawMessage(reflect.TypeOf(zero))
+	return GenerateSchemaRawMessage(reflect.TypeFor[T]())
 }

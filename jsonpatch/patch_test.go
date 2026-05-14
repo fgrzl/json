@@ -212,6 +212,29 @@ func TestGeneratePatchShouldMoveArrayElementsGivenSwappedElements(t *testing.T) 
 	assert.True(t, found, "Expected move op for array reordering")
 }
 
+func TestGeneratePatchShouldHandleCommonPrefixAndSuffixInArrays(t *testing.T) {
+	// Arrange
+	before := map[string]any{
+		"list": []any{"a", "b", "c", "d", "e"},
+	}
+	after := map[string]any{
+		"list": []any{"a", "b", "x", "y", "e"},
+	}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+	assert.NoError(t, err)
+	assert.Len(t, patch, 2)
+	assert.Equal(t, "replace", patch[0].Op)
+	assert.Equal(t, "/list/2", patch[0].Path)
+	assert.Equal(t, "x", patch[0].Value)
+	assert.Equal(t, "replace", patch[1].Op)
+	assert.Equal(t, "/list/3", patch[1].Path)
+	assert.Equal(t, "y", patch[1].Value)
+}
+
 func TestShouldApplyBasicPatchOperationsCorrectly(t *testing.T) {
 	// Arrange
 	before := map[string]any{
@@ -516,6 +539,19 @@ func TestGeneratePatchShouldIgnoreUnexportedFields(t *testing.T) {
 	assert.Equal(t, "/ExportedField", patch[0].Path)
 	assert.Equal(t, "replace", patch[0].Op)
 	assert.Equal(t, "hello2", patch[0].Value)
+}
+
+func TestGeneratePatchShouldTreatEquivalentNumericArrayValuesAsEqual(t *testing.T) {
+	// Arrange
+	before := map[string]any{"list": []any{1}}
+	after := map[string]any{"list": []any{1.0}}
+
+	// Act
+	patch, err := GeneratePatch(before, after, "")
+
+	// Assert
+	require.NoError(t, err)
+	assert.Empty(t, patch)
 }
 
 // Error handling and edge case tests
@@ -3028,6 +3064,18 @@ func TestShouldSucceedGivenMatchingValueWhenApplyingTestPatch(t *testing.T) {
 		// Assert
 		require.NoError(t, err)
 		assert.Equal(t, []any{1, 2, 3}, result["arr"])
+	})
+	t.Run("Numeric_value_matches_across_json_types", func(t *testing.T) {
+		// Arrange
+		doc := map[string]any{"arr": []any{1}}
+		patches := []Patch{{Op: "test", Path: "/arr/0", Value: 1.0}}
+
+		// Act
+		result, err := ApplyPatch(doc, patches)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, []any{1}, result["arr"])
 	})
 	t.Run("Null_value_matches", func(t *testing.T) {
 		// Arrange

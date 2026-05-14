@@ -46,9 +46,15 @@ type benchNestedStruct struct {
 	Tags    []string    `json:"tags"`
 }
 
+func benchmarkSetup(b *testing.B) {
+	b.Helper()
+	b.ReportAllocs()
+}
+
 // ---------- GeneratePatch benchmarks ----------
 
 func BenchmarkGeneratePatch_FlatMap_10Keys(b *testing.B) {
+	benchmarkSetup(b)
 	before := flatDoc(10)
 	after := flatDoc(10)
 	after["key5"] = "changed"
@@ -60,6 +66,7 @@ func BenchmarkGeneratePatch_FlatMap_10Keys(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_FlatMap_100Keys(b *testing.B) {
+	benchmarkSetup(b)
 	before := flatDoc(100)
 	after := flatDoc(100)
 	after["key50"] = "changed"
@@ -72,6 +79,7 @@ func BenchmarkGeneratePatch_FlatMap_100Keys(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_FlatMap_1000Keys(b *testing.B) {
+	benchmarkSetup(b)
 	before := flatDoc(1000)
 	after := flatDoc(1000)
 	for j := 0; j < 50; j++ {
@@ -84,6 +92,7 @@ func BenchmarkGeneratePatch_FlatMap_1000Keys(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_Nested_Depth5(b *testing.B) {
+	benchmarkSetup(b)
 	before := nestedDoc(5)
 	after := nestedDoc(5)
 	inner := after["child"].(map[string]any)["child"].(map[string]any)["child"].(map[string]any)["child"].(map[string]any)["child"].(map[string]any)
@@ -95,6 +104,7 @@ func BenchmarkGeneratePatch_Nested_Depth5(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_Nested_Depth10(b *testing.B) {
+	benchmarkSetup(b)
 	before := nestedDoc(10)
 	after := nestedDoc(10)
 	cur := after
@@ -109,6 +119,7 @@ func BenchmarkGeneratePatch_Nested_Depth10(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_Array_10Elements(b *testing.B) {
+	benchmarkSetup(b)
 	before := arrayDoc(10)
 	after := arrayDoc(10)
 	after["items"].([]any)[5].(map[string]any)["name"] = "changed"
@@ -119,6 +130,7 @@ func BenchmarkGeneratePatch_Array_10Elements(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_Array_100Elements(b *testing.B) {
+	benchmarkSetup(b)
 	before := arrayDoc(100)
 	after := arrayDoc(100)
 	after["items"].([]any)[50].(map[string]any)["name"] = "changed"
@@ -129,6 +141,7 @@ func BenchmarkGeneratePatch_Array_100Elements(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_Array_1000Elements(b *testing.B) {
+	benchmarkSetup(b)
 	before := arrayDoc(1000)
 	after := arrayDoc(1000)
 	after["items"].([]any)[500].(map[string]any)["name"] = "changed"
@@ -138,7 +151,21 @@ func BenchmarkGeneratePatch_Array_1000Elements(b *testing.B) {
 	}
 }
 
+func BenchmarkGeneratePatch_Array_1000Elements_CommonPrefixSuffix(b *testing.B) {
+	benchmarkSetup(b)
+	before := arrayDoc(1000)
+	after := arrayDoc(1000)
+	for i := 480; i < 520; i++ {
+		after["items"].([]any)[i].(map[string]any)["name"] = "changed"
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = GeneratePatch(before, after, "")
+	}
+}
+
 func BenchmarkGeneratePatch_Struct(b *testing.B) {
+	benchmarkSetup(b)
 	before := benchStruct{Name: "Alice", Age: 30, Email: "alice@example.com", Active: true}
 	after := benchStruct{Name: "Alice", Age: 31, Email: "alice@new.com", Active: true}
 	b.ResetTimer()
@@ -148,6 +175,7 @@ func BenchmarkGeneratePatch_Struct(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_NestedStruct(b *testing.B) {
+	benchmarkSetup(b)
 	before := benchNestedStruct{
 		ID:      "1",
 		Profile: benchStruct{Name: "Alice", Age: 30, Email: "a@b.com", Active: true},
@@ -165,6 +193,7 @@ func BenchmarkGeneratePatch_NestedStruct(b *testing.B) {
 }
 
 func BenchmarkGeneratePatch_NoDiff(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(50)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -175,6 +204,7 @@ func BenchmarkGeneratePatch_NoDiff(b *testing.B) {
 // ---------- ApplyPatch benchmarks ----------
 
 func BenchmarkApplyPatch_SingleAdd(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(10)
 	patches := []Patch{{Op: "add", Path: "/newKey", Value: "newVal"}}
 	b.ResetTimer()
@@ -184,6 +214,7 @@ func BenchmarkApplyPatch_SingleAdd(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_SingleReplace(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(10)
 	patches := []Patch{{Op: "replace", Path: "/key5", Value: "replaced"}}
 	b.ResetTimer()
@@ -193,6 +224,7 @@ func BenchmarkApplyPatch_SingleReplace(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_SingleRemove(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(10)
 	patches := []Patch{{Op: "remove", Path: "/key5"}}
 	b.ResetTimer()
@@ -202,6 +234,7 @@ func BenchmarkApplyPatch_SingleRemove(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_SingleMove(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(10)
 	patches := []Patch{{Op: "move", From: "/key0", Path: "/moved"}}
 	b.ResetTimer()
@@ -211,6 +244,7 @@ func BenchmarkApplyPatch_SingleMove(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_SingleCopy(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(10)
 	patches := []Patch{{Op: "copy", From: "/key0", Path: "/copied"}}
 	b.ResetTimer()
@@ -220,6 +254,7 @@ func BenchmarkApplyPatch_SingleCopy(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_SingleTest(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(10)
 	patches := []Patch{{Op: "test", Path: "/key5", Value: 5}}
 	b.ResetTimer()
@@ -229,6 +264,7 @@ func BenchmarkApplyPatch_SingleTest(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_BatchOps_10(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(20)
 	patches := make([]Patch, 10)
 	for i := 0; i < 10; i++ {
@@ -241,6 +277,7 @@ func BenchmarkApplyPatch_BatchOps_10(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_BatchOps_100(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(200)
 	patches := make([]Patch, 100)
 	for i := 0; i < 100; i++ {
@@ -253,6 +290,7 @@ func BenchmarkApplyPatch_BatchOps_100(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_DeepPath(b *testing.B) {
+	benchmarkSetup(b)
 	doc := nestedDoc(10)
 	patches := []Patch{{Op: "replace", Path: "/child/child/child/child/child/child/child/child/child/child/leaf", Value: "new"}}
 	b.ResetTimer()
@@ -262,6 +300,7 @@ func BenchmarkApplyPatch_DeepPath(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_ArrayAppendDash(b *testing.B) {
+	benchmarkSetup(b)
 	doc := arrayDoc(100)
 	patches := []Patch{{Op: "add", Path: "/items/-", Value: map[string]any{"id": 100, "name": "appended"}}}
 	b.ResetTimer()
@@ -271,6 +310,7 @@ func BenchmarkApplyPatch_ArrayAppendDash(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_ArrayInsertMiddle(b *testing.B) {
+	benchmarkSetup(b)
 	doc := arrayDoc(100)
 	patches := []Patch{{Op: "add", Path: "/items/50", Value: map[string]any{"id": 999, "name": "inserted"}}}
 	b.ResetTimer()
@@ -280,6 +320,7 @@ func BenchmarkApplyPatch_ArrayInsertMiddle(b *testing.B) {
 }
 
 func BenchmarkApplyPatch_ArrayRemoveMiddle(b *testing.B) {
+	benchmarkSetup(b)
 	doc := arrayDoc(100)
 	patches := []Patch{{Op: "remove", Path: "/items/50"}}
 	b.ResetTimer()
@@ -291,6 +332,7 @@ func BenchmarkApplyPatch_ArrayRemoveMiddle(b *testing.B) {
 // ---------- Roundtrip benchmarks (Generate + Apply) ----------
 
 func BenchmarkRoundtrip_FlatMap_50Keys(b *testing.B) {
+	benchmarkSetup(b)
 	before := flatDoc(50)
 	after := flatDoc(50)
 	after["key25"] = "changed"
@@ -305,6 +347,7 @@ func BenchmarkRoundtrip_FlatMap_50Keys(b *testing.B) {
 }
 
 func BenchmarkRoundtrip_NestedStruct(b *testing.B) {
+	benchmarkSetup(b)
 	before := benchNestedStruct{
 		ID:      "1",
 		Profile: benchStruct{Name: "Alice", Age: 30, Email: "a@b.com", Active: true},
@@ -323,6 +366,7 @@ func BenchmarkRoundtrip_NestedStruct(b *testing.B) {
 }
 
 func BenchmarkRoundtrip_Array_100Elements(b *testing.B) {
+	benchmarkSetup(b)
 	before := arrayDoc(100)
 	after := arrayDoc(100)
 	after["items"].([]any)[50].(map[string]any)["name"] = "changed"
@@ -336,6 +380,7 @@ func BenchmarkRoundtrip_Array_100Elements(b *testing.B) {
 // ---------- JSON Marshal/Unmarshal benchmarks ----------
 
 func BenchmarkPatchMarshalJSON(b *testing.B) {
+	benchmarkSetup(b)
 	patches := []Patch{
 		{Op: "add", Path: "/foo", Value: "bar"},
 		{Op: "remove", Path: "/baz"},
@@ -351,6 +396,7 @@ func BenchmarkPatchMarshalJSON(b *testing.B) {
 }
 
 func BenchmarkPatchUnmarshalJSON(b *testing.B) {
+	benchmarkSetup(b)
 	data := []byte(`[{"op":"add","path":"/foo","value":"bar"},{"op":"remove","path":"/baz","value":null},{"op":"replace","path":"/qux","value":42},{"op":"move","from":"/a","path":"/b","value":null},{"op":"copy","from":"/c","path":"/d","value":null},{"op":"test","path":"/e","value":true}]`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -362,6 +408,7 @@ func BenchmarkPatchUnmarshalJSON(b *testing.B) {
 // ---------- DeepCopy benchmarks ----------
 
 func BenchmarkDeepCopy_FlatMap_100Keys(b *testing.B) {
+	benchmarkSetup(b)
 	doc := flatDoc(100)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -370,6 +417,7 @@ func BenchmarkDeepCopy_FlatMap_100Keys(b *testing.B) {
 }
 
 func BenchmarkDeepCopy_Nested_Depth10(b *testing.B) {
+	benchmarkSetup(b)
 	doc := nestedDoc(10)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -378,6 +426,7 @@ func BenchmarkDeepCopy_Nested_Depth10(b *testing.B) {
 }
 
 func BenchmarkDeepCopy_Array_100Elements(b *testing.B) {
+	benchmarkSetup(b)
 	doc := arrayDoc(100)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -388,6 +437,7 @@ func BenchmarkDeepCopy_Array_100Elements(b *testing.B) {
 // ---------- toMap (struct conversion) benchmarks ----------
 
 func BenchmarkToMap_SimpleStruct(b *testing.B) {
+	benchmarkSetup(b)
 	s := benchStruct{Name: "Alice", Age: 30, Email: "a@b.com", Active: true, Score: 100}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -396,6 +446,7 @@ func BenchmarkToMap_SimpleStruct(b *testing.B) {
 }
 
 func BenchmarkToMap_NestedStruct(b *testing.B) {
+	benchmarkSetup(b)
 	s := benchNestedStruct{
 		ID:      "1",
 		Profile: benchStruct{Name: "Alice", Age: 30, Email: "a@b.com", Active: true},
@@ -408,6 +459,7 @@ func BenchmarkToMap_NestedStruct(b *testing.B) {
 }
 
 func BenchmarkToMap_EmbeddedStruct(b *testing.B) {
+	benchmarkSetup(b)
 	type Base struct {
 		ID   string `json:"id"`
 		Type string `json:"type"`

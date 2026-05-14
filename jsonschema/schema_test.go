@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func assertSchema(t *testing.T, input any, expected map[string]any) {
@@ -167,6 +168,26 @@ func TestShouldGenerateComponentReferencesWhenGeneratingSchemaWithComponents(t *
 	assertSchemas(t, TestStruct{}, expected, expectedComponents)
 }
 
+func TestShouldReturnIndependentCachedSchemaWithComponents(t *testing.T) {
+	type Nested struct {
+		Field string `json:"field"`
+	}
+	type TestStruct struct {
+		Data []Nested `json:"data"`
+	}
+
+	firstSchema, firstComponents := GenerateSchemaWithComponents(reflect.TypeOf(TestStruct{}))
+	firstSchema["type"] = "broken"
+	firstSchema["properties"].(map[string]any)["data"].(map[string]any)["type"] = "broken"
+	firstComponents["Nested"].(map[string]any)["properties"].(map[string]any)["field"].(map[string]any)["type"] = "broken"
+
+	secondSchema, secondComponents := GenerateSchemaWithComponents(reflect.TypeOf(TestStruct{}))
+
+	assert.Equal(t, "object", secondSchema["type"])
+	assert.Equal(t, "array", secondSchema["properties"].(map[string]any)["data"].(map[string]any)["type"])
+	assert.Equal(t, "string", secondComponents["Nested"].(map[string]any)["properties"].(map[string]any)["field"].(map[string]any)["type"])
+}
+
 func TestShouldGenerateRawMessageWhenUsingRawMessageFunction(t *testing.T) {
 	type TestStruct struct {
 		ID   int    `json:"id" required:"true"`
@@ -186,6 +207,23 @@ func TestShouldGenerateRawMessageWhenUsingRawMessageFunction(t *testing.T) {
 	expectedBytes, _ := json.Marshal(expected)
 	got := GenerateSchemaRawMessage(typ)
 	assert.JSONEq(t, string(expectedBytes), string(got))
+}
+
+func TestShouldReturnIndependentCachedRawMessagesGivenSameType(t *testing.T) {
+	type TestStruct struct {
+		ID   int    `json:"id" required:"true"`
+		Name string `json:"name"`
+	}
+
+	typ := reflect.TypeOf(TestStruct{})
+	first := GenerateSchemaRawMessage(typ)
+	require.NotEmpty(t, first)
+	first[0] = '{'
+
+	second := GenerateSchemaRawMessage(typ)
+	require.NotEmpty(t, second)
+	assert.Contains(t, string(second), `"type":"object"`)
+	assert.Contains(t, string(second), `"required":["id"]`)
 }
 
 func TestShouldGenerateIntegerSchemaGivenIntType(t *testing.T) {
@@ -290,6 +328,16 @@ func TestShouldGenerateTimeSchemaGivenTimeType(t *testing.T) {
 		"type":   "string",
 		"format": "date-time",
 	})
+}
+
+func TestShouldReturnIndependentCachedSchemas(t *testing.T) {
+	first := GenerateSchema(reflect.TypeOf(time.Time{}))
+	first["format"] = "broken"
+	first["description"] = "mutated"
+
+	second := GenerateSchema(reflect.TypeOf(time.Time{}))
+	assert.Equal(t, "date-time", second["format"])
+	assert.NotContains(t, second, "description")
 }
 
 func TestShouldKeepTaggedTimeSchemasIsolatedAcrossFields(t *testing.T) {

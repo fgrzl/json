@@ -53,6 +53,8 @@ func main() {
 
 Use `Validate(schema, data)` to check decoded JSON (maps, slices, primitives) against a generated schema. Validation covers same-document refs, composite keywords, conditional branches, and generator-emitted constraints such as `multipleOf`, `minProperties`, `patternProperties`, and `contains`. See `docs/jsonschema.md` for components, self-referential types, nullable fields, and tags.
 
+Repeated schema generation is cached, and cached schemas are returned as independent copies so callers can safely mutate them. `SchemaFrom[T]()` and `GenerateSchemaRawMessage` also reuse cached raw schema output on repeated calls.
+
 ## jsonpatch — quick start
 
 Compute a patch and apply it:
@@ -83,7 +85,7 @@ func main() {
 }
 ```
 
-See `docs/jsonpatch.md` for advanced scenarios: array heuristics, object-root empty-path behavior, patch hydration, and handling for values like `uuid.UUID` and `time.Time` that marshal differently from their internal Go representation.
+See `docs/jsonpatch.md` for advanced scenarios: array heuristics, object-root empty-path behavior, patch hydration, and handling for values like `uuid.UUID` and `time.Time` that marshal differently from their internal Go representation. Array diffs trim common prefixes and suffixes before doing deeper work, and numeric equality follows JSON semantics.
 
 ## polymorphic — quick start
 
@@ -113,7 +115,7 @@ func main() {
 }
 ```
 
-See `docs/polymorphic.md` for advanced scenarios: custom discriminators, registry management, and testing patterns.
+See `docs/polymorphic.md` for advanced scenarios: custom discriminators, registry management, and testing patterns. Registry lookups are optimized for read-heavy use, and `ClearRegistry()` restores the built-in defaults for tests.
 
 ## Contributing and docs
 

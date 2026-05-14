@@ -28,9 +28,15 @@ func initBenchRegistry(b *testing.B) {
 	Register(func() *benchCar { return &benchCar{} })
 }
 
+func benchmarkSetup(b *testing.B) {
+	b.Helper()
+	b.ReportAllocs()
+}
+
 // ---------- Registry benchmarks ----------
 
 func BenchmarkCreateInstance(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -39,6 +45,7 @@ func BenchmarkCreateInstance(b *testing.B) {
 }
 
 func BenchmarkLoadFactory(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -46,9 +53,21 @@ func BenchmarkLoadFactory(b *testing.B) {
 	}
 }
 
+func BenchmarkLoadFactory_Parallel(b *testing.B) {
+	benchmarkSetup(b)
+	initBenchRegistry(b)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _ = LoadFactory("bench-person")
+		}
+	})
+}
+
 // ---------- Marshal/Unmarshal benchmarks ----------
 
 func BenchmarkMarshalPolymorphicJSON(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	obj := &benchPerson{Name: "Alice", Age: 30}
 	b.ResetTimer()
@@ -65,6 +84,7 @@ var benchEnvelopeBytes = func() []byte {
 }()
 
 func BenchmarkUnmarshalPolymorphicJSON(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	data := benchEnvelopeBytes
 	b.ResetTimer()
@@ -74,6 +94,7 @@ func BenchmarkUnmarshalPolymorphicJSON(b *testing.B) {
 }
 
 func BenchmarkRoundtrip_MarshalUnmarshal(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	obj := &benchPerson{Name: "Alice", Age: 30}
 	b.ResetTimer()
@@ -84,6 +105,7 @@ func BenchmarkRoundtrip_MarshalUnmarshal(b *testing.B) {
 }
 
 func BenchmarkEnvelope_MarshalJSON(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	env := NewEnvelope(&benchPerson{Name: "Alice", Age: 30})
 	b.ResetTimer()
@@ -93,6 +115,7 @@ func BenchmarkEnvelope_MarshalJSON(b *testing.B) {
 }
 
 func BenchmarkEnvelope_UnmarshalJSON(b *testing.B) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	data := benchEnvelopeBytes
 	b.ResetTimer()
@@ -105,6 +128,7 @@ func BenchmarkEnvelope_UnmarshalJSON(b *testing.B) {
 // ---------- ToPage benchmark ----------
 
 func benchmarkToPageN(b *testing.B, n int) {
+	benchmarkSetup(b)
 	initBenchRegistry(b)
 	envelopes := make([]*Envelope, n)
 	for i := 0; i < n; i++ {
