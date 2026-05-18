@@ -15,11 +15,11 @@ These short examples help someone new to the project get started quickly. For mo
 
 ## Docs
 
-See the `docs/` directory for package-specific guides and advanced examples:
+See **[docs/](docs/README.md)** for the documentation index. Package guides:
 
-- **docs/jsonschema.md** — schema generation and validation, tag-driven features (`json:",inline"`, `x-*`, `const`, `examples`, `$defs`), components, and nullable types.
-- **docs/jsonpatch.md** — RFC 6902 patch generation and application, array heuristics, and `ApplyPatchAndHydrate` for typed values.
-- **docs/polymorphic.md** — discriminator envelope, registry, and testing with `ClearRegistry`.
+- [jsonschema](docs/jsonschema.md) — schema generation and validation
+- [jsonpatch](docs/jsonpatch.md) — RFC 6902 patches
+- [polymorphic](docs/polymorphic.md) — discriminator envelopes
 
 ## Prerequisites
 
