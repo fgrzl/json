@@ -35,11 +35,16 @@ jobs:
       - name: Ensure dependencies
         run: go mod tidy
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Build
         run: go build ./...
 
-      - name: Run Tests
-        run: go test ./... -v -coverprofile=coverage.out
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
 
-      - name: Coverage summary
-        run: go tool cover -func=coverage.out
+      - name: Run Tests
+        run: go test ./...

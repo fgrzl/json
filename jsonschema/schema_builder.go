@@ -118,12 +118,8 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 			// If this is a circular reference, add to components
 			if b.hasSelfReference(schema, t.Name()) {
 				b.components[t.Name()] = schema
-			} else {
-				// For non-circular types, add to components if no nested components were generated
-				// AND the type only contains primitive types (not registered types or anonymous structs)
-				if len(b.components) == 0 && b.hasOnlyPrimitiveFields(t) {
-					b.components[t.Name()] = schema
-				}
+			} else if len(b.components) == 0 && b.hasOnlyPrimitiveFields(t) {
+				b.components[t.Name()] = schema
 			}
 		}
 		return schema
@@ -137,7 +133,8 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 			TypeKey:                 TypeObject,
 			AdditionalPropertiesKey: b.schemaInternal(t.Elem(), asRef),
 		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return map[string]any{TypeKey: TypeInteger}
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{TypeKey: TypeNumber}
@@ -145,9 +142,11 @@ func (b *Builder) schemaInternalRoot(t reflect.Type, asRef bool) map[string]any 
 		return map[string]any{TypeKey: TypeBoolean}
 	case reflect.String:
 		return map[string]any{TypeKey: TypeString}
-	default:
+	case reflect.Invalid, reflect.Interface, reflect.Pointer, reflect.Chan, reflect.Func,
+		reflect.UnsafePointer, reflect.Complex64, reflect.Complex128:
 		return map[string]any{TypeKey: TypeString}
 	}
+	return map[string]any{TypeKey: TypeString}
 }
 
 func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
@@ -178,7 +177,8 @@ func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
 			TypeKey:                 TypeObject,
 			AdditionalPropertiesKey: b.schemaInternal(t.Elem(), asRef),
 		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return map[string]any{TypeKey: TypeInteger}
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{TypeKey: TypeNumber}
@@ -186,9 +186,11 @@ func (b *Builder) schemaInternal(t reflect.Type, asRef bool) map[string]any {
 		return map[string]any{TypeKey: TypeBoolean}
 	case reflect.String:
 		return map[string]any{TypeKey: TypeString}
-	default:
+	case reflect.Invalid, reflect.Interface, reflect.Pointer, reflect.Chan, reflect.Func,
+		reflect.UnsafePointer, reflect.Complex64, reflect.Complex128:
 		return map[string]any{TypeKey: TypeString}
 	}
+	return map[string]any{TypeKey: TypeString}
 }
 
 func (b *Builder) structSchema(t reflect.Type, useRef bool) map[string]any {
@@ -292,6 +294,8 @@ func (b *Builder) assignReferenceProperty(properties map[string]any, name string
 	ref := map[string]any{RefKey: "#/components/schemas/" + refName}
 
 	switch ftKind {
+	case reflect.Struct:
+		properties[name] = ref
 	case reflect.Slice, reflect.Array:
 		properties[name] = map[string]any{
 			TypeKey:  TypeArray,
@@ -302,7 +306,10 @@ func (b *Builder) assignReferenceProperty(properties map[string]any, name string
 			TypeKey:                 TypeObject,
 			AdditionalPropertiesKey: ref,
 		}
-	default:
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128,
+		reflect.Chan, reflect.Func, reflect.Interface, reflect.Pointer, reflect.String, reflect.UnsafePointer:
 		properties[name] = ref
 	}
 }
@@ -364,6 +371,13 @@ func (b *Builder) containsRefTo(obj any, targetRef string) bool {
 	return false
 }
 
+func isPrimitiveKind(k reflect.Kind) bool {
+	return k == reflect.String || k == reflect.Bool ||
+		k == reflect.Int || k == reflect.Int8 || k == reflect.Int16 || k == reflect.Int32 || k == reflect.Int64 ||
+		k == reflect.Uint || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 ||
+		k == reflect.Float32 || k == reflect.Float64
+}
+
 // hasOnlyPrimitiveFields checks if a struct type contains only primitive fields (no registered types or complex structs)
 func (b *Builder) hasOnlyPrimitiveFields(t reflect.Type) bool {
 	if t.Kind() != reflect.Struct {
@@ -382,31 +396,20 @@ func (b *Builder) hasOnlyPrimitiveFields(t reflect.Type) bool {
 			ft = ft.Elem()
 		}
 
-		// Check if this is a primitive type
-		switch ft.Kind() {
-		case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-			reflect.Float32, reflect.Float64, reflect.Bool:
-			// This is a primitive type
+		if isPrimitiveKind(ft.Kind()) {
 			continue
-		case reflect.Slice, reflect.Array:
-			// Check if slice/array of primitives
+		}
+		if ft.Kind() == reflect.Slice || ft.Kind() == reflect.Array {
 			elemType := ft.Elem()
 			for elemType.Kind() == reflect.Pointer {
 				elemType = elemType.Elem()
 			}
-			switch elemType.Kind() {
-			case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-				reflect.Float32, reflect.Float64, reflect.Bool:
-				continue
-			default:
+			if !isPrimitiveKind(elemType.Kind()) {
 				return false
 			}
-		default:
-			// This is not a primitive type (could be registered type, struct, etc.)
-			return false
+			continue
 		}
+		return false
 	}
 	return true
 }

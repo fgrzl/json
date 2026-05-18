@@ -1,49 +1,116 @@
-﻿version: "2"
+﻿# fgrzl standard golangci-lint config (shared across Go repositories)
+version: "2"
 
 run:
   timeout: 5m
-  tests: true
-  modules-download-mode: readonly
 
 linters:
-  default: none
   enable:
     - bodyclose
     - copyloopvar
-    - embeddedstructfieldcheck
-    - durationcheck
+    - dogsled
+    - dupl
     - errcheck
     - errorlint
-    - gocyclo
-
+    - exhaustive
+    - gocritic
     - gosec
     - govet
     - ineffassign
     - misspell
-    - nilerr
+    - nakedret
+    - noctx
     - revive
     - staticcheck
     - unconvert
+    - unparam
     - unused
+    - whitespace
   settings:
-    gocyclo:
-      min-complexity: 30
+    dupl:
+      threshold: 140
+    exhaustive:
+      check:
+        - switch
+        - map
+    gosec:
+      excludes:
+        - G404
+    misspell:
+      locale: US
     revive:
-      severity: warning
-      confidence: 0.8
+      enable-default-rules: false
       rules:
         - name: blank-imports
-        - name: errorf
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: early-return
+        - name: error-return
         - name: error-strings
-        - name: exported
+        - name: error-naming
         - name: if-return
+        - name: increment-decrement
         - name: indent-error-flow
-        - name: package-comments
-        - name: range-val-address
-        - name: unexported-return
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unreachable-code
+        - name: var-declaration
         - name: var-naming
+  exclusions:
+    rules:
+      - linters:
+          - gosec
+        text: "G404"
+      - linters: [revive]
+        path: _test\.go$
+        text: "redefines-builtin-id"
+      - linters: [revive]
+        path: _test\.go$
+        text: "^unused-parameter:"
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G306"
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G304"
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G115"
+      - path: (^|\\/)test(\\/|\\\\)
+        linters:
+          - gosec
+        text: "G115"
+      - path: (^|[\\/])bench([\\/]).*\.go$
+        linters:
+          - bodyclose
+      - path: (^|[\\/])test([\\/]).*\.go$
+        linters:
+          - bodyclose
+      - path: _test\.go$
+        linters:
+          - gosec
+        text: "G124"
+      - path: (^|[\\/])test([\\/])
+        linters:
+          - gosec
+        text: "G304"
+      - path: (^|[\\/])test([\\/])
+        linters:
+          - gosec
+        text: "G204"
+      # Platform trust-store installers run validated certutil/security/sudo with fixed argv.
+      - path: (^|[\\/])internal[\\/]trust[\\/]
+        linters:
+          - gosec
+        text: "G204"
 
-formatters:
-  enable:
-    - gofmt
-    - gofumpt
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

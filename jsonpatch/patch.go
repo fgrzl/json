@@ -66,14 +66,17 @@ func GeneratePatch(before, after any, basePath string) ([]Patch, error) {
 			patches = append(patches, Patch{Op: "replace", Path: path, Value: afterVal})
 			continue
 		}
-		switch reflect.TypeOf(beforeVal).Kind() {
+		switch kind := reflect.TypeOf(beforeVal).Kind(); kind {
 		case reflect.Slice:
 			arrOps, _ := generateArrayPatch(path, beforeVal, afterVal)
 			patches = append(patches, arrOps...)
 		case reflect.Map, reflect.Struct:
 			nested, _ := GeneratePatch(beforeVal, afterVal, path)
 			patches = append(patches, nested...)
-		default:
+		case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128,
+			reflect.Array, reflect.Chan, reflect.Func, reflect.Interface, reflect.Pointer, reflect.String, reflect.UnsafePointer:
 			if !deepEqualFiltered(beforeVal, afterVal) {
 				patches = append(patches, Patch{Op: "replace", Path: path, Value: afterVal})
 			}
@@ -286,20 +289,17 @@ func convertValue(data any) any {
 		v = v.Elem()
 	}
 
-	switch v.Kind() {
+	switch kind := v.Kind(); kind {
 	case reflect.Struct:
-		// Convert nested struct to map
 		m, _ := toMap(data)
 		return m
 	case reflect.Slice, reflect.Array:
-		// Convert slice/array elements
 		result := make([]any, v.Len())
 		for i := 0; i < v.Len(); i++ {
 			result[i] = convertValue(v.Index(i).Interface())
 		}
 		return result
 	case reflect.Map:
-		// Convert map values
 		if v.Type().Key().Kind() == reflect.String {
 			result := make(map[string]any)
 			for _, key := range v.MapKeys() {
@@ -309,9 +309,13 @@ func convertValue(data any) any {
 			return result
 		}
 		return data
-	default:
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128,
+		reflect.Chan, reflect.Func, reflect.Interface, reflect.Pointer, reflect.String, reflect.UnsafePointer:
 		return data
 	}
+	return data
 }
 
 func normalizeSpecialValue(data any) (any, bool) {
@@ -378,18 +382,18 @@ func deepCopy(original map[string]any) map[string]any {
 
 // deepCopySlice creates a deep copy of a []any slice
 func deepCopySlice(original []any) []any {
-	copy := make([]any, len(original))
+	cloned := make([]any, len(original))
 	for i, value := range original {
 		switch v := value.(type) {
 		case map[string]any:
-			copy[i] = deepCopy(v)
+			cloned[i] = deepCopy(v)
 		case []any:
-			copy[i] = deepCopySlice(v)
+			cloned[i] = deepCopySlice(v)
 		default:
-			copy[i] = v
+			cloned[i] = v
 		}
 	}
-	return copy
+	return cloned
 }
 
 // deepEqualFiltered compares two JSON-like values using JSON semantics.
@@ -556,13 +560,14 @@ func arrayDiff(basePath string, beforeSlice, afterSlice []any) ([]Patch, error) 
 	for i := m - 1; i >= 0; i-- {
 		curr, prev = prev, curr
 		for j := n - 1; j >= 0; j-- {
-			if eq[i*n+j] {
+			switch {
+			case eq[i*n+j]:
 				curr[j] = prev[j+1] + 1
 				dir[i*(n+1)+j] = 0
-			} else if prev[j] >= curr[j+1] {
+			case prev[j] >= curr[j+1]:
 				curr[j] = prev[j]
 				dir[i*(n+1)+j] = 1
-			} else {
+			default:
 				curr[j] = curr[j+1]
 				dir[i*(n+1)+j] = 2
 			}

@@ -392,14 +392,14 @@ func validateStringConstraints(path *validationPath, schema map[string]any, data
 	if !ok {
 		return
 	}
-	if min, ok := toFloat(schema[MinLengthKey]); ok {
-		if int(min) > len([]rune(s)) {
-			addErr(errs, path, fmt.Sprintf("string length %d less than minLength %d", len([]rune(s)), int(min)))
+	if minLen, ok := toFloat(schema[MinLengthKey]); ok {
+		if int(minLen) > len([]rune(s)) {
+			addErr(errs, path, fmt.Sprintf("string length %d less than minLength %d", len([]rune(s)), int(minLen)))
 		}
 	}
-	if max, ok := toFloat(schema[MaxLengthKey]); ok {
-		if int(max) < len([]rune(s)) {
-			addErr(errs, path, fmt.Sprintf("string length %d greater than maxLength %d", len([]rune(s)), int(max)))
+	if maxLen, ok := toFloat(schema[MaxLengthKey]); ok {
+		if int(maxLen) < len([]rune(s)) {
+			addErr(errs, path, fmt.Sprintf("string length %d greater than maxLength %d", len([]rune(s)), int(maxLen)))
 		}
 	}
 	if pattern, ok := schema[PatternKey].(string); ok && pattern != "" {
@@ -445,14 +445,14 @@ func validateNumberConstraints(path *validationPath, schema map[string]any, data
 	if !ok {
 		return
 	}
-	if min, ok := toFloat(schema[MinimumKey]); ok {
-		if n < min {
-			addErr(errs, path, fmt.Sprintf("value %v less than minimum %v", data, min))
+	if minVal, ok := toFloat(schema[MinimumKey]); ok {
+		if n < minVal {
+			addErr(errs, path, fmt.Sprintf("value %v less than minimum %v", data, minVal))
 		}
 	}
-	if max, ok := toFloat(schema[MaximumKey]); ok {
-		if n > max {
-			addErr(errs, path, fmt.Sprintf("value %v greater than maximum %v", data, max))
+	if maxVal, ok := toFloat(schema[MaximumKey]); ok {
+		if n > maxVal {
+			addErr(errs, path, fmt.Sprintf("value %v greater than maximum %v", data, maxVal))
 		}
 	}
 	if exMin, ok := toFloat(schema[ExclusiveMinimumKey]); ok {
@@ -492,14 +492,14 @@ func validateEnumConst(path *validationPath, schema map[string]any, data any, er
 }
 
 func validateObjectPropertyCounts(path *validationPath, schema map[string]any, length int, errs *[]ValidationError) {
-	if min, ok := toFloat(schema[MinPropertiesKey]); ok {
-		if float64(length) < min {
-			addErr(errs, path, fmt.Sprintf("object property count %d less than minProperties %d", length, int(min)))
+	if minProps, ok := toFloat(schema[MinPropertiesKey]); ok {
+		if float64(length) < minProps {
+			addErr(errs, path, fmt.Sprintf("object property count %d less than minProperties %d", length, int(minProps)))
 		}
 	}
-	if max, ok := toFloat(schema[MaxPropertiesKey]); ok {
-		if float64(length) > max {
-			addErr(errs, path, fmt.Sprintf("object property count %d greater than maxProperties %d", length, int(max)))
+	if maxProps, ok := toFloat(schema[MaxPropertiesKey]); ok {
+		if float64(length) > maxProps {
+			addErr(errs, path, fmt.Sprintf("object property count %d greater than maxProperties %d", length, int(maxProps)))
 		}
 	}
 }
@@ -621,14 +621,14 @@ func validateContains(root map[string]any, path *validationPath, schema map[stri
 }
 
 func validateArrayLength(path *validationPath, schema map[string]any, length int, errs *[]ValidationError) {
-	if min, ok := toFloat(schema[MinItemsKey]); ok {
-		if float64(length) < min {
-			addErr(errs, path, fmt.Sprintf("array length %d less than minItems %d", length, int(min)))
+	if minItems, ok := toFloat(schema[MinItemsKey]); ok {
+		if float64(length) < minItems {
+			addErr(errs, path, fmt.Sprintf("array length %d less than minItems %d", length, int(minItems)))
 		}
 	}
-	if max, ok := toFloat(schema[MaxItemsKey]); ok {
-		if float64(length) > max {
-			addErr(errs, path, fmt.Sprintf("array length %d greater than maxItems %d", length, int(max)))
+	if maxItems, ok := toFloat(schema[MaxItemsKey]); ok {
+		if float64(length) > maxItems {
+			addErr(errs, path, fmt.Sprintf("array length %d greater than maxItems %d", length, int(maxItems)))
 		}
 	}
 }
