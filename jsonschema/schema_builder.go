@@ -243,17 +243,21 @@ func (b *Builder) populateStructField(parentType reflect.Type, useRef bool, prop
 
 	if useRef && baseType.Name() != "" && isEligibleForRef(baseType) {
 		b.addReferencedStructField(parentType, properties, name, ftKind, baseType, useRef)
+		appendRequired(field, required, name)
 		return
 	}
 
 	fieldSchema := b.schemaInternal(field.Type, useRef)
 	applyFieldTags(field, fieldSchema)
+	appendRequired(field, required, name)
+	properties[name] = fieldSchema
+}
 
+// appendRequired appends name to required when the field carries binding:"required" or required:"true".
+func appendRequired(field reflect.StructField, required *[]string, name string) {
 	if field.Tag.Get(RequiredKey) == "true" || field.Tag.Get("binding") == "required" {
 		*required = append(*required, name)
 	}
-
-	properties[name] = fieldSchema
 }
 
 func (b *Builder) mergeEmbeddedStruct(properties map[string]any, required *[]string, embeddedType reflect.Type) {
