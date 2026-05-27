@@ -94,10 +94,75 @@ var registeredSchemas = builtinSchemas()
 
 var registeredSchemasMu sync.RWMutex
 
+var (
+	customRegisteredTypes   = make(map[reflect.Type]struct{})
+	customRegisteredTypesMu sync.RWMutex
+)
+
+var (
+	schemaCache   = make(map[reflect.Type]schemaCacheEntry)
+	schemaCacheMu sync.RWMutex
+
+	schemaWithComponentsCache   = make(map[reflect.Type]schemaWithComponentsCacheEntry)
+	schemaWithComponentsCacheMu sync.RWMutex
+
+	schemaRawCache   = make(map[reflect.Type]json.RawMessage)
+	schemaRawCacheMu sync.RWMutex
+)
+
+type schemaWithComponentsCacheEntry struct {
+	root       map[string]any
+	components map[string]any
+	safe       bool
+}
+
+type schemaCacheEntry struct {
+	schema map[string]any
+	safe   bool
+}
+
 // rawMessageType is the reflect.Type for json.RawMessage and is used to
 // ensure RawMessage is treated as raw JSON (empty schema) rather than a
 // byte slice.
 var rawMessageType = reflect.TypeOf(json.RawMessage{})
+
+type schemaCloneState struct {
+	maps   map[uintptr]map[string]any
+	slices map[uintptr][]any
+}
+
+func markCustomRegisteredType(t reflect.Type) {
+	if t == nil {
+		return
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	customRegisteredTypesMu.Lock()
+	customRegisteredTypes[t] = struct{}{}
+	customRegisteredTypesMu.Unlock()
+}
+
+func isCustomRegisteredType(t reflect.Type) bool {
+	if t == nil {
+		return false
+	}
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	customRegisteredTypesMu.RLock()
+	_, ok := customRegisteredTypes[t]
+	customRegisteredTypesMu.RUnlock()
+	return ok
+}
+
+func clearCustomRegisteredTypes() {
+	customRegisteredTypesMu.Lock()
+	customRegisteredTypes = make(map[reflect.Type]struct{})
+	customRegisteredTypesMu.Unlock()
+}
 
 // getRegisteredSchema attempts to find a registered schema for the
 // provided type. It handles a few special cases such as named
@@ -108,7 +173,7 @@ func getRegisteredSchema(t reflect.Type) (map[string]any, bool) {
 	}
 
 	// Normalize pointers
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -123,7 +188,7 @@ func getRegisteredSchema(t reflect.Type) (map[string]any, bool) {
 	s, ok := registeredSchemas[t]
 	registeredSchemasMu.RUnlock()
 	if ok {
-		return s, true
+		return cloneSchemaMap(s), true
 	}
 
 	// If this is a slice/array of bytes (anonymous []byte or [N]byte),
@@ -133,23 +198,251 @@ func getRegisteredSchema(t reflect.Type) (map[string]any, bool) {
 		s, ok := registeredSchemas[reflect.TypeOf([]byte{})]
 		registeredSchemasMu.RUnlock()
 		if ok {
-			return s, true
+			return cloneSchemaMap(s), true
 		}
 	}
 
 	return nil, false
 }
 
+func cloneSchemaMapFast(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+
+	cloned := make(map[string]any, len(schema))
+	for key, value := range schema {
+		cloned[key] = cloneSchemaValueFast(value)
+	}
+
+	return cloned
+}
+
+func cloneSchemaValueFast(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchemaMapFast(typed)
+	case []any:
+		return cloneSchemaSliceFast(typed)
+	case []string:
+		cloned := make([]string, len(typed))
+		copy(cloned, typed)
+		return cloned
+	default:
+		return value
+	}
+}
+
+func cloneSchemaSliceFast(items []any) []any {
+	if items == nil {
+		return nil
+	}
+
+	cloned := make([]any, len(items))
+	for i, item := range items {
+		cloned[i] = cloneSchemaValueFast(item)
+	}
+
+	return cloned
+}
+
+func cloneSchemaMap(schema map[string]any) map[string]any {
+	state := &schemaCloneState{
+		maps:   make(map[uintptr]map[string]any),
+		slices: make(map[uintptr][]any),
+	}
+	return cloneSchemaMapWithState(schema, state)
+}
+
+func cloneSchemaMapWithState(schema map[string]any, state *schemaCloneState) map[string]any {
+	if schema == nil {
+		return nil
+	}
+
+	ptr := reflect.ValueOf(schema).Pointer()
+	if cloned, ok := state.maps[ptr]; ok {
+		return cloned
+	}
+
+	cloned := make(map[string]any, len(schema))
+	state.maps[ptr] = cloned
+	for key, value := range schema {
+		cloned[key] = cloneSchemaValueWithState(value, state)
+	}
+
+	return cloned
+}
+
+func cloneSchemaValueWithState(value any, state *schemaCloneState) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchemaMapWithState(typed, state)
+	case []any:
+		return cloneSchemaSliceWithState(typed, state)
+	case []string:
+		cloned := make([]string, len(typed))
+		copy(cloned, typed)
+		return cloned
+	default:
+		return value
+	}
+}
+
+func cloneSchemaSliceWithState(items []any, state *schemaCloneState) []any {
+	if items == nil {
+		return nil
+	}
+
+	ptr := reflect.ValueOf(items).Pointer()
+	if cloned, ok := state.slices[ptr]; ok {
+		return cloned
+	}
+
+	cloned := make([]any, len(items))
+	state.slices[ptr] = cloned
+	for i, item := range items {
+		cloned[i] = cloneSchemaValueWithState(item, state)
+	}
+
+	return cloned
+}
+
+// GenerateSchema returns the JSON Schema for the provided reflect.Type.
+// It is a convenience wrapper around Builder.Schema.
 func GenerateSchema(t reflect.Type) map[string]any {
 	builder := NewBuilder()
 	return builder.Schema(t)
 }
 
-// GenerateSchema returns the JSON Schema for the provided reflect.Type.
-// This is a convenience wrapper around Builder.Schema.
+// GenerateSchemaWithComponents returns the JSON Schema for the provided reflect.Type
+// along with any component schemas discovered during generation.
 func GenerateSchemaWithComponents(t reflect.Type) (map[string]any, map[string]any) {
 	builder := NewBuilder()
 	return builder.SchemaWithComponents(t)
+}
+
+func normalizeCacheType(t reflect.Type) reflect.Type {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+func getCachedSchema(t reflect.Type) (map[string]any, bool) {
+	t = normalizeCacheType(t)
+	if t == nil {
+		return nil, false
+	}
+
+	schemaCacheMu.RLock()
+	entry, ok := schemaCache[t]
+	schemaCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	if entry.safe {
+		return cloneSchemaMapFast(entry.schema), true
+	}
+	return cloneSchemaMap(entry.schema), true
+}
+
+func getCachedSchemaWithComponents(t reflect.Type) (map[string]any, map[string]any, bool) {
+	t = normalizeCacheType(t)
+	if t == nil {
+		return nil, nil, false
+	}
+
+	schemaWithComponentsCacheMu.RLock()
+	entry, ok := schemaWithComponentsCache[t]
+	schemaWithComponentsCacheMu.RUnlock()
+	if !ok {
+		return nil, nil, false
+	}
+
+	if entry.safe {
+		return cloneSchemaMapFast(entry.root), cloneSchemaMapFast(entry.components), true
+	}
+	return cloneSchemaMap(entry.root), cloneSchemaMap(entry.components), true
+}
+
+func cacheSchema(t reflect.Type, schema map[string]any, safe bool) {
+	t = normalizeCacheType(t)
+	if t == nil || schema == nil {
+		return
+	}
+
+	schemaCacheMu.Lock()
+	if safe {
+		schemaCache[t] = schemaCacheEntry{schema: cloneSchemaMapFast(schema), safe: true}
+	} else {
+		schemaCache[t] = schemaCacheEntry{schema: cloneSchemaMap(schema), safe: false}
+	}
+	schemaCacheMu.Unlock()
+}
+
+func getCachedSchemaRawMessage(t reflect.Type) (json.RawMessage, bool) {
+	t = normalizeCacheType(t)
+	if t == nil {
+		return nil, false
+	}
+
+	schemaRawCacheMu.RLock()
+	raw, ok := schemaRawCache[t]
+	schemaRawCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+
+	return append(json.RawMessage(nil), raw...), true
+}
+
+func cacheSchemaRawMessage(t reflect.Type, raw json.RawMessage) {
+	t = normalizeCacheType(t)
+	if t == nil || raw == nil {
+		return
+	}
+
+	schemaRawCacheMu.Lock()
+	schemaRawCache[t] = append(json.RawMessage(nil), raw...)
+	schemaRawCacheMu.Unlock()
+}
+
+func cacheSchemaWithComponents(t reflect.Type, root, components map[string]any, safe bool) {
+	t = normalizeCacheType(t)
+	if t == nil || root == nil {
+		return
+	}
+
+	schemaWithComponentsCacheMu.Lock()
+	if safe {
+		schemaWithComponentsCache[t] = schemaWithComponentsCacheEntry{
+			root:       cloneSchemaMapFast(root),
+			components: cloneSchemaMapFast(components),
+			safe:       true,
+		}
+	} else {
+		schemaWithComponentsCache[t] = schemaWithComponentsCacheEntry{
+			root:       cloneSchemaMap(root),
+			components: cloneSchemaMap(components),
+			safe:       false,
+		}
+	}
+	schemaWithComponentsCacheMu.Unlock()
+}
+
+func clearSchemaCache() {
+	schemaCacheMu.Lock()
+	schemaCache = make(map[reflect.Type]schemaCacheEntry)
+	schemaCacheMu.Unlock()
+
+	schemaWithComponentsCacheMu.Lock()
+	schemaWithComponentsCache = make(map[reflect.Type]schemaWithComponentsCacheEntry)
+	schemaWithComponentsCacheMu.Unlock()
+
+	schemaRawCacheMu.Lock()
+	schemaRawCache = make(map[reflect.Type]json.RawMessage)
+	schemaRawCacheMu.Unlock()
 }
 
 // applyFieldTags applies struct tags to a field's JSON Schema.
@@ -157,221 +450,202 @@ func applyFieldTags(field reflect.StructField, schema map[string]any) {
 	addNumericTags(field, schema)
 	addStringTags(field, schema)
 	addArrayTags(field, schema)
+	applyCommonFieldTags(field, schema)
+	applyExtensionTags(field, schema)
+	applySchemaKeywordTags(field, schema)
+}
 
-	// Common tags
-	for _, tag := range []struct {
-		key   string
-		apply func(string, map[string]any)
-	}{
-		{EnumKey, func(v string, s map[string]any) {
-			parts := strings.Split(v, ",")
-			for i := range parts {
-				parts[i] = strings.TrimSpace(parts[i])
-			}
-			s[EnumKey] = parts
-		}},
-		// Note: dataSource, componentId, dependencyId and position are now
-		// handled via x-* extension tags (for example `x-component:"id"`).
-		{TitleKey, func(v string, s map[string]any) { s[TitleKey] = v }},
-		{DescriptionKey, func(v string, s map[string]any) { s[DescriptionKey] = v }},
-		{DefaultKey, func(v string, s map[string]any) { s[DefaultKey] = v }},
-		{AdditionalPropertiesKey, func(v string, s map[string]any) {
-			if v == "false" {
-				s[AdditionalPropertiesKey] = false
-				return
-			}
-
-			// Determine if this field is a json.RawMessage so we can
-			// coerce it to an object when additionalProperties is used.
-			ft := field.Type
-			if ft.Kind() == reflect.Ptr {
-				ft = ft.Elem()
-			}
-
-			if ft == rawMessageType || len(s) == 0 {
-				// For RawMessage or empty schemas, treat the field as an object
-				// when additionalProperties is specified.
-				s[TypeKey] = TypeObject
-				if strings.HasPrefix(v, "#") {
-					s[AdditionalPropertiesKey] = map[string]any{RefKey: v}
-				} else {
-					s[AdditionalPropertiesKey] = map[string]any{}
-				}
-				return
-			}
-
-			// For non-raw fields, do not change the existing type; only set
-			// the additionalProperties value (allowing refs or empty schema).
-			if strings.HasPrefix(v, "#") {
-				s[AdditionalPropertiesKey] = map[string]any{RefKey: v}
-			} else {
-				s[AdditionalPropertiesKey] = map[string]any{}
-			}
-		}},
-		{FormatKey, func(v string, s map[string]any) { s[FormatKey] = v }},
-	} {
-		if val := field.Tag.Get(tag.key); val != "" {
-			tag.apply(val, schema)
+func applyCommonFieldTags(field reflect.StructField, schema map[string]any) {
+	if val := field.Tag.Get(EnumKey); val != "" {
+		parts := strings.Split(val, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
 		}
+		schema[EnumKey] = parts
+	}
+	if val := field.Tag.Get(TitleKey); val != "" {
+		schema[TitleKey] = val
+	}
+	if val := field.Tag.Get(DescriptionKey); val != "" {
+		schema[DescriptionKey] = val
+	}
+	if val := field.Tag.Get(DefaultKey); val != "" {
+		schema[DefaultKey] = val
+	}
+	if val := field.Tag.Get(AdditionalPropertiesKey); val != "" {
+		applyAdditionalPropertiesTag(field, schema, val)
+	}
+	if val := field.Tag.Get(FormatKey); val != "" {
+		schema[FormatKey] = val
+	}
+}
+
+func applyAdditionalPropertiesTag(field reflect.StructField, schema map[string]any, val string) {
+	if val == "false" {
+		schema[AdditionalPropertiesKey] = false
+		return
 	}
 
-	// Apply custom extension tags: any struct tag key that starts with "x-"
-	// will be copied into the schema. We attempt multiple coercions:
-	//  - JSON decode if the value looks like an array or object
-	//  - integer parse
-	//  - boolean parse
-	// Otherwise the raw string is used.
-	for k, v := range parseStructTag(string(field.Tag)) {
-		if strings.HasPrefix(k, "x-") {
-			if _, exists := schema[k]; exists {
-				continue
-			}
-			trim := strings.TrimSpace(v)
-			if len(trim) > 0 && (trim[0] == '[' || trim[0] == '{') {
-				var anyVal any
-				if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
-					schema[k] = anyVal
-					continue
-				}
-				// Fallback: support simple unquoted arrays like [a,b]
-				if trim[0] == '[' && strings.HasSuffix(trim, "]") {
-					inner := strings.TrimSpace(trim[1 : len(trim)-1])
-					if inner == "" {
-						schema[k] = []any{}
-						continue
-					}
-					parts := strings.Split(inner, ",")
-					arr := make([]any, 0, len(parts))
-					for _, p := range parts {
-						p = strings.TrimSpace(p)
-						// strip optional surrounding quotes
-						if strings.HasPrefix(p, "\"") && strings.HasSuffix(p, "\"") && len(p) >= 2 {
-							unq, err := strconv.Unquote(p)
-							if err == nil {
-								arr = append(arr, unq)
-								continue
-							}
-							p = p[1 : len(p)-1]
-						}
-						arr = append(arr, p)
-					}
-					schema[k] = arr
-					continue
-				}
-			}
-			if n, err := strconv.Atoi(trim); err == nil {
-				schema[k] = n
-				continue
-			}
-			if b, err := strconv.ParseBool(trim); err == nil {
-				schema[k] = b
-				continue
-			}
-			schema[k] = v
-		}
+	ft := field.Type
+	if ft.Kind() == reflect.Pointer {
+		ft = ft.Elem()
 	}
 
-	// Support direct JSON Schema keyword tags (e.g. const, examples, $defs, $schema, $id)
+	if ft == rawMessageType || len(schema) == 0 {
+		schema[TypeKey] = TypeObject
+		if strings.HasPrefix(val, "#") {
+			schema[AdditionalPropertiesKey] = map[string]any{RefKey: val}
+		} else {
+			schema[AdditionalPropertiesKey] = map[string]any{}
+		}
+		return
+	}
+
+	if strings.HasPrefix(val, "#") {
+		schema[AdditionalPropertiesKey] = map[string]any{RefKey: val}
+		return
+	}
+
+	schema[AdditionalPropertiesKey] = map[string]any{}
+}
+
+func applyExtensionTags(field reflect.StructField, schema map[string]any) {
+	for key, val := range parseStructTag(string(field.Tag)) {
+		if !strings.HasPrefix(key, "x-") {
+			continue
+		}
+		if _, exists := schema[key]; exists {
+			continue
+		}
+		schema[key] = coerceExtensionTagValue(val)
+	}
+}
+
+func coerceExtensionTagValue(val string) any {
+	trim := strings.TrimSpace(val)
+	if len(trim) > 0 && (trim[0] == '[' || trim[0] == '{') {
+		var anyVal any
+		if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+			return anyVal
+		}
+		if trim[0] == '[' && strings.HasSuffix(trim, "]") {
+			return parseLooseArrayValue(trim)
+		}
+	}
+	if n, err := strconv.Atoi(trim); err == nil {
+		return n
+	}
+	if b, err := strconv.ParseBool(trim); err == nil {
+		return b
+	}
+	return val
+}
+
+func parseLooseArrayValue(trim string) []any {
+	inner := strings.TrimSpace(trim[1 : len(trim)-1])
+	if inner == "" {
+		return []any{}
+	}
+
+	parts := strings.Split(inner, ",")
+	arr := make([]any, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "\"") && strings.HasSuffix(p, "\"") && len(p) >= 2 {
+			if unq, err := strconv.Unquote(p); err == nil {
+				arr = append(arr, unq)
+				continue
+			}
+			p = p[1 : len(p)-1]
+		}
+		if n, err := strconv.Atoi(p); err == nil {
+			arr = append(arr, n)
+			continue
+		}
+		if f, err := strconv.ParseFloat(p, 64); err == nil {
+			arr = append(arr, f)
+			continue
+		}
+		if b, err := strconv.ParseBool(p); err == nil {
+			arr = append(arr, b)
+			continue
+		}
+		arr = append(arr, p)
+	}
+	return arr
+}
+
+func applySchemaKeywordTags(field reflect.StructField, schema map[string]any) {
 	for _, key := range []string{
 		ConstKey, ExamplesKey, MinPropertiesKey, MaxPropertiesKey,
 		ExclusiveMinimumKey, ExclusiveMaximumKey, PatternPropertiesKey,
 		ContainsKey, IfKey, ThenKey, ElseKey, DefsKey, SchemaKey, IDKey,
 	} {
 		if val := field.Tag.Get(key); val != "" {
-			trim := strings.TrimSpace(val)
-			switch key {
-			case MinPropertiesKey, MaxPropertiesKey:
-				if i, err := strconv.Atoi(trim); err == nil {
-					schema[key] = i
-				}
-			case ExclusiveMinimumKey, ExclusiveMaximumKey:
-				if f, err := strconv.ParseFloat(trim, 64); err == nil {
-					schema[key] = f
-				}
-			case ExamplesKey, PatternPropertiesKey, DefsKey:
-				if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[') {
-					var anyVal any
-					if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
-						schema[key] = anyVal
-						break
-					}
-				}
-				schema[key] = val
-			case IfKey, ThenKey, ElseKey, ContainsKey:
-				if strings.HasPrefix(trim, "#") {
-					schema[key] = map[string]any{RefKey: trim}
-					break
-				}
-				if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[') {
-					var anyVal any
-					if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
-						schema[key] = anyVal
-						break
-					}
-					// Fallback: support simple unquoted arrays like [a,b]
-					if trim[0] == '[' && strings.HasSuffix(trim, "]") {
-						inner := strings.TrimSpace(trim[1 : len(trim)-1])
-						if inner == "" {
-							schema[key] = []any{}
-							break
-						}
-						parts := strings.Split(inner, ",")
-						arr := make([]any, 0, len(parts))
-						for _, p := range parts {
-							p = strings.TrimSpace(p)
-							// strip optional surrounding quotes
-							if strings.HasPrefix(p, "\"") && strings.HasSuffix(p, "\"") && len(p) >= 2 {
-								unq, err := strconv.Unquote(p)
-								if err == nil {
-									arr = append(arr, unq)
-									continue
-								}
-								p = p[1 : len(p)-1]
-							}
-							// try numeric
-							if n, err := strconv.Atoi(p); err == nil {
-								arr = append(arr, n)
-								continue
-							}
-							if f, err := strconv.ParseFloat(p, 64); err == nil {
-								arr = append(arr, f)
-								continue
-							}
-							if b, err := strconv.ParseBool(p); err == nil {
-								arr = append(arr, b)
-								continue
-							}
-							arr = append(arr, p)
-						}
-						schema[key] = arr
-						break
-					}
-				}
-				schema[key] = val
-			default:
-				// const, $schema, $id: attempt numeric/bool/json coercion, fallback to string
-				if n, err := strconv.Atoi(trim); err == nil {
-					schema[key] = n
-					break
-				}
-				if f, err := strconv.ParseFloat(trim, 64); err == nil {
-					schema[key] = f
-					break
-				}
-				if b, err := strconv.ParseBool(trim); err == nil {
-					schema[key] = b
-					break
-				}
-				if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[' || trim[0] == '"') {
-					var anyVal any
-					if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
-						schema[key] = anyVal
-						break
-					}
-				}
-				schema[key] = val
+			applySchemaKeywordTag(schema, key, val)
+		}
+	}
+}
+
+func applySchemaKeywordTag(schema map[string]any, key, val string) {
+	trim := strings.TrimSpace(val)
+
+	switch key {
+	case MinPropertiesKey, MaxPropertiesKey:
+		if i, err := strconv.Atoi(trim); err == nil {
+			schema[key] = i
+		}
+	case ExclusiveMinimumKey, ExclusiveMaximumKey:
+		if f, err := strconv.ParseFloat(trim, 64); err == nil {
+			schema[key] = f
+		}
+	case ExamplesKey, PatternPropertiesKey, DefsKey:
+		if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[') {
+			var anyVal any
+			if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+				schema[key] = anyVal
+				return
 			}
 		}
+		schema[key] = val
+	case IfKey, ThenKey, ElseKey, ContainsKey:
+		if strings.HasPrefix(trim, "#") {
+			schema[key] = map[string]any{RefKey: trim}
+			return
+		}
+		if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[') {
+			var anyVal any
+			if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+				schema[key] = anyVal
+				return
+			}
+			if trim[0] == '[' && strings.HasSuffix(trim, "]") {
+				schema[key] = parseLooseArrayValue(trim)
+				return
+			}
+		}
+		schema[key] = val
+	default:
+		if n, err := strconv.Atoi(trim); err == nil {
+			schema[key] = n
+			return
+		}
+		if f, err := strconv.ParseFloat(trim, 64); err == nil {
+			schema[key] = f
+			return
+		}
+		if b, err := strconv.ParseBool(trim); err == nil {
+			schema[key] = b
+			return
+		}
+		if len(trim) > 0 && (trim[0] == '{' || trim[0] == '[' || trim[0] == '"') {
+			var anyVal any
+			if err := json.Unmarshal([]byte(trim), &anyVal); err == nil {
+				schema[key] = anyVal
+				return
+			}
+		}
+		schema[key] = val
 	}
 }
 
@@ -525,13 +799,15 @@ func jsonFieldName(f reflect.StructField) string {
 // process-wide. To restore the default built-in type set (e.g. in tests), call
 // ClearRegistry.
 func RegisterSchema(t reflect.Type, schema map[string]any) {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if schema != nil {
 		registeredSchemasMu.Lock()
-		registeredSchemas[t] = schema
+		registeredSchemas[t] = cloneSchemaMap(schema)
 		registeredSchemasMu.Unlock()
+		markCustomRegisteredType(t)
+		clearSchemaCache()
 	}
 }
 
@@ -542,21 +818,27 @@ func ClearRegistry() {
 	registeredSchemasMu.Lock()
 	registeredSchemas = builtinSchemas()
 	registeredSchemasMu.Unlock()
+	clearCustomRegisteredTypes()
+	clearSchemaCache()
 }
 
 // GenerateSchemaRawMessage returns a JSON Schema as a raw JSON message.
 // It returns nil if the schema cannot be marshaled.
 func GenerateSchemaRawMessage(t reflect.Type) json.RawMessage {
+	if raw, ok := getCachedSchemaRawMessage(t); ok {
+		return raw
+	}
+
 	schema := GenerateSchema(t)
 	raw, err := json.Marshal(schema)
 	if err != nil {
 		return nil
 	}
+	cacheSchemaRawMessage(t, raw)
 	return raw
 }
 
 // SchemaFrom generates a JSON Schema for a generic type T.
 func SchemaFrom[T any]() json.RawMessage {
-	var zero T
-	return GenerateSchemaRawMessage(reflect.TypeOf(zero))
+	return GenerateSchemaRawMessage(reflect.TypeFor[T]())
 }

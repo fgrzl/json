@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func assertSchema(t *testing.T, input any, expected map[string]any) {
@@ -167,6 +168,26 @@ func TestShouldGenerateComponentReferencesWhenGeneratingSchemaWithComponents(t *
 	assertSchemas(t, TestStruct{}, expected, expectedComponents)
 }
 
+func TestShouldReturnIndependentCachedSchemaWithComponents(t *testing.T) {
+	type Nested struct {
+		Field string `json:"field"`
+	}
+	type TestStruct struct {
+		Data []Nested `json:"data"`
+	}
+
+	firstSchema, firstComponents := GenerateSchemaWithComponents(reflect.TypeOf(TestStruct{}))
+	firstSchema["type"] = "broken"
+	firstSchema["properties"].(map[string]any)["data"].(map[string]any)["type"] = "broken"
+	firstComponents["Nested"].(map[string]any)["properties"].(map[string]any)["field"].(map[string]any)["type"] = "broken"
+
+	secondSchema, secondComponents := GenerateSchemaWithComponents(reflect.TypeOf(TestStruct{}))
+
+	assert.Equal(t, "object", secondSchema["type"])
+	assert.Equal(t, "array", secondSchema["properties"].(map[string]any)["data"].(map[string]any)["type"])
+	assert.Equal(t, "string", secondComponents["Nested"].(map[string]any)["properties"].(map[string]any)["field"].(map[string]any)["type"])
+}
+
 func TestShouldGenerateRawMessageWhenUsingRawMessageFunction(t *testing.T) {
 	type TestStruct struct {
 		ID   int    `json:"id" required:"true"`
@@ -186,6 +207,23 @@ func TestShouldGenerateRawMessageWhenUsingRawMessageFunction(t *testing.T) {
 	expectedBytes, _ := json.Marshal(expected)
 	got := GenerateSchemaRawMessage(typ)
 	assert.JSONEq(t, string(expectedBytes), string(got))
+}
+
+func TestShouldReturnIndependentCachedRawMessagesGivenSameType(t *testing.T) {
+	type TestStruct struct {
+		ID   int    `json:"id" required:"true"`
+		Name string `json:"name"`
+	}
+
+	typ := reflect.TypeOf(TestStruct{})
+	first := GenerateSchemaRawMessage(typ)
+	require.NotEmpty(t, first)
+	first[0] = '{'
+
+	second := GenerateSchemaRawMessage(typ)
+	require.NotEmpty(t, second)
+	assert.Contains(t, string(second), `"type":"object"`)
+	assert.Contains(t, string(second), `"required":["id"]`)
 }
 
 func TestShouldGenerateIntegerSchemaGivenIntType(t *testing.T) {
@@ -286,6 +324,44 @@ func TestShouldGenerateUUIDSchemaGivenUUIDType(t *testing.T) {
 }
 
 func TestShouldGenerateTimeSchemaGivenTimeType(t *testing.T) {
+	assertSchema(t, time.Time{}, map[string]any{
+		"type":   "string",
+		"format": "date-time",
+	})
+}
+
+func TestShouldReturnIndependentCachedSchemas(t *testing.T) {
+	first := GenerateSchema(reflect.TypeOf(time.Time{}))
+	first["format"] = "broken"
+	first["description"] = "mutated"
+
+	second := GenerateSchema(reflect.TypeOf(time.Time{}))
+	assert.Equal(t, "date-time", second["format"])
+	assert.NotContains(t, second, "description")
+}
+
+func TestShouldKeepTaggedTimeSchemasIsolatedAcrossFields(t *testing.T) {
+	type Example struct {
+		ExpiresAt time.Time  `json:"expires_at" description:"When the client credential expires"`
+		RevokedAt *time.Time `json:"revoked_at" description:"When the client was revoked"`
+	}
+
+	assertSchema(t, Example{}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"expires_at": map[string]any{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "When the client credential expires",
+			},
+			"revoked_at": map[string]any{
+				"type":        "string",
+				"format":      "date-time",
+				"description": "When the client was revoked",
+			},
+		},
+	})
+
 	assertSchema(t, time.Time{}, map[string]any{
 		"type":   "string",
 		"format": "date-time",
@@ -717,6 +793,23 @@ func TestShouldHandleRequiredTagFromBinding(t *testing.T) {
 	})
 }
 
+func TestShouldPropagateBindingRequiredForRefExtractedStructField(t *testing.T) {
+	// Arrange: Item is a named struct eligible for $ref extraction.
+	// The parent's binding:"required" tag must still populate the parent's required list.
+	type Item struct {
+		Name string `json:"name"`
+	}
+	type Parent struct {
+		Item Item `json:"item" binding:"required"`
+	}
+
+	// Act & Assert
+	b := NewBuilder()
+	schema := b.Schema(reflect.TypeOf(Parent{}))
+	required, _ := schema["required"].([]string)
+	assert.Contains(t, required, "item", "binding:\"required\" on a $ref-extracted field must appear in parent required list")
+}
+
 func TestShouldUseRefTagWhenSpecified(t *testing.T) {
 	// Arrange
 	type TestStruct struct {
@@ -975,6 +1068,31 @@ func TestShouldHandlePointerTypeInRegistration(t *testing.T) {
 
 	// Cleanup
 	ClearRegistry()
+}
+
+func TestShouldRegisterSelfReferentialSchemaWithoutRecursion(t *testing.T) {
+	// Arrange
+	type CustomType struct{}
+	customSchema := map[string]any{
+		"type": "object",
+	}
+	customSchema[PropertiesKey] = map[string]any{
+		"self": customSchema,
+	}
+
+	t.Cleanup(ClearRegistry)
+
+	// Act
+	assert.NotPanics(t, func() {
+		RegisterSchema(reflect.TypeOf(CustomType{}), customSchema)
+	})
+
+	// Assert
+	generated := GenerateSchema(reflect.TypeOf(CustomType{}))
+	assert.Equal(t, "object", generated["type"])
+	properties, ok := generated[PropertiesKey].(map[string]any)
+	assert.True(t, ok)
+	assert.Contains(t, properties, "self")
 }
 
 func TestShouldIgnoreNilSchemaInRegistration(t *testing.T) {
@@ -1335,7 +1453,8 @@ func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
 	}
 
 	type Sub struct {
-		Base  `json:",inline"`
+		Base `json:",inline"`
+
 		Other string `json:"other"`
 	}
 
@@ -1363,12 +1482,13 @@ func TestShouldInlineAnonymousEmbeddedStructWhenTaggedInline(t *testing.T) {
 
 func TestShouldNotInlineAnonymousEmbeddedStructWhenNoInlineTag(t *testing.T) {
 	type Base struct {
-		CredentialID uuid.UUID `json:"credential_id" componentId:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
+		CredentialID uuid.UUID `json:"credential_id" x-component-id:"secret-picker" title:"Secret" description:"UUID of the stored credential used to authenticate to the provider"`
 		Tenant       string    `json:"tenant" title:"Tenant ID" description:"Azure tenant (directory) identifier used for authentication"`
 	}
 
 	type Sub struct {
 		Base
+
 		Other string `json:"other"`
 	}
 

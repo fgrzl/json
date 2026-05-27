@@ -56,6 +56,7 @@ Notes
 - Use `RegisterType[T]()` or `Register(func() *MyType { ... })` to register types.
 - Use `RegisterWithDiscriminator` when you need an explicit discriminator string.
 - The registry is process-wide global state; call `ClearRegistry()` in tests to remove custom registrations and restore package defaults.
+- Registry lookups are optimized for read-heavy use, so prefer registration during initialization instead of frequent runtime churn.
 
 Advanced scenarios
 ------------------
@@ -83,8 +84,9 @@ or `UnmarshalPolymorphicJSON` with the adapted bytes.
 4) Thread-safety and global state
 
 The registry is process-wide global state. Concurrent registration, lookup, and
-reset are synchronized, but registrations still affect the whole process, so it
-is best to register application types during initialization when possible.
+reset are synchronized, but registrations still affect the whole process. Use
+`ClearRegistry()` to restore the built-in defaults in tests, and register
+application types during initialization when possible.
 
 5) Example: custom factory and dynamic creation
 

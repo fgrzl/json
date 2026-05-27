@@ -1,3 +1,4 @@
+// Package testkit provides helpers for polymorphic registration tests.
 package testkit
 
 import (

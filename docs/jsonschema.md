@@ -54,6 +54,10 @@ Notes
 - `Builder.Schema()` returns a schema for the provided type but does not automatically
   populate the builder components; use `SchemaWithComponents()` when you need a root
   schema that includes references to collected components.
+- Repeated schema generation is cached by type, and cached results are returned as
+  independent copies so callers can safely mutate them.
+- `SchemaFrom[T]()` and `GenerateSchemaRawMessage()` reuse cached raw schema output
+  on repeated calls.
 - The `Builder` is not safe for concurrent use. Passing a nil `reflect.Type` to
   `Schema` or `SchemaWithComponents` will panic.
 
@@ -148,7 +152,15 @@ generator represents additional properties for object-like fields:
 
 This allows mixing flexible raw JSON with more strictly typed nested schemas.
 
-7) Tips & gotchas
+7) Validation semantics and runtime notes
+
+- Validation follows JSON-friendly equality semantics for numeric values, so
+  values decoded from JSON compare as expected across numeric types.
+- Built-in format handling covers `date-time`, `uuid`, `uri`, `ipv4`, and `byte`.
+- Pattern-property regexes are cached per schema shape during validation, which
+  keeps repeated validation of the same schema cheaper.
+
+8) Tips & gotchas
 
 - The builder expects a non-nil reflect.Type for the root; passing a nil value
   will panic.

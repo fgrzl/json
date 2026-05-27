@@ -1,0 +1,13 @@
+# Normalize text files and keep LF line endings.
+* text=auto eol=lf
+
+# Go sources and module files.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Documentation and structured text.
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
