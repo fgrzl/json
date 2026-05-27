@@ -793,6 +793,23 @@ func TestShouldHandleRequiredTagFromBinding(t *testing.T) {
 	})
 }
 
+func TestShouldPropagateBindingRequiredForRefExtractedStructField(t *testing.T) {
+	// Arrange: Item is a named struct eligible for $ref extraction.
+	// The parent's binding:"required" tag must still populate the parent's required list.
+	type Item struct {
+		Name string `json:"name"`
+	}
+	type Parent struct {
+		Item Item `json:"item" binding:"required"`
+	}
+
+	// Act & Assert
+	b := NewBuilder()
+	schema := b.Schema(reflect.TypeOf(Parent{}))
+	required, _ := schema["required"].([]string)
+	assert.Contains(t, required, "item", "binding:\"required\" on a $ref-extracted field must appear in parent required list")
+}
+
 func TestShouldUseRefTagWhenSpecified(t *testing.T) {
 	// Arrange
 	type TestStruct struct {
